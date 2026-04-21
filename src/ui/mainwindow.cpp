@@ -1,34 +1,30 @@
 #include "mainwindow.h"
-#include "ui_mainwindow.h"
-
-#include <opencv2/opencv.hpp>
-#include <Qdebug>
+#include "ImageLoader.h"
+#include "./ui_mainwindow.h"
 
 #include <QFileDialog>
-#include <QmessageBox>
+#include <QMessageBox>
 #include <QPixmap>
+#include <QDebug>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
+    , m_imageLoader(new ImageLoader)
 {
     ui->setupUi(this);
-
-    cv::Mat testImage(100, 100, CV_8UC1, cv::Scalar(128));
-    qDebug() << "OpenCV test:" << testImage.cols << "x" << testImage.rows;
 
     connect(ui->actionOpen_Image, &QAction::triggered, this, &MainWindow::openImage);
 }
 
 MainWindow::~MainWindow()
 {
+    delete m_imageLoader;
     delete ui;
 }
 
 void MainWindow::openImage()
 {
-
-
     QString fileName = QFileDialog::getOpenFileName(
         this,
         "Open Image",
@@ -40,15 +36,25 @@ void MainWindow::openImage()
         return;
     }
 
-    QPixmap pixmap(fileName);
+    cv::Mat image = m_imageLoader->loadWithOpenCV(fileName);
 
-    if (pixmap.isNull()) {
-        QMessageBox::warning(this, "Error", "Failed to load image.");
+    if (image.empty()) {
+        QMessageBox::warning(this, "Error", "Failed to load image with OpenCV.");
+        return;
+    }
+
+    qDebug() << "Loaded image:" << image.cols << "x" << image.rows
+             << "channels:" << image.channels();
+
+    QImage qimg = m_imageLoader->matToQImage(image);
+
+    if (qimg.isNull()) {
+        QMessageBox::warning(this, "Error", "Failed to convert image for display.");
         return;
     }
 
     ui->imageLabel->setPixmap(
-        pixmap.scaled(
+        QPixmap::fromImage(qimg).scaled(
             ui->imageLabel->size(),
             Qt::KeepAspectRatio,
             Qt::SmoothTransformation

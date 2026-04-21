@@ -9,18 +9,22 @@ class MainWindow;
 }
 QT_END_NAMESPACE
 
+class ImageLoader;
+
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
 
 public:
-    explicit MainWindow(QWidget *parent = nullptr);
-    ~MainWindow() override;
+    MainWindow(QWidget *parent = nullptr);
+    ~MainWindow();
 
 private slots:
     void openImage();
 
 private:
     Ui::MainWindow *ui;
+    ImageLoader *m_imageLoader;
 };
+
 #endif // MAINWINDOW_H

@@ -9,9 +9,11 @@ qt_standard_project_setup()
 qt_add_executable(WormProfiler
     WIN32 MACOSX_BUNDLE
     main.cpp
-    mainwindow.cpp
-    mainwindow.h
-    mainwindow.ui
+    src/ui/mainwindow.cpp
+    src/ui/mainwindow.h
+    src/ui/mainwindow.ui
+    src/io/ImageLoader.cpp
+    src/io/ImageLoader.h
 )
 
 target_link_libraries(WormProfiler
@@ -24,6 +26,9 @@ target_link_libraries(WormProfiler
 target_include_directories(WormProfiler
     PRIVATE
         ${OpenCV_INCLUDE_DIRS}
+        src
+        src/ui
+        src/io
     )
 
 install(TARGETS WormProfiler

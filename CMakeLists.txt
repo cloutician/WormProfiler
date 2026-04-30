@@ -14,6 +14,8 @@ qt_add_executable(WormProfiler
     src/ui/mainwindow.ui
     src/io/ImageLoader.cpp
     src/io/ImageLoader.h
+    src/preprocessing/PreprocessingPipeline.h
+    src/preprocessing/PreprocessingPipeline.cpp
 )
 
 target_link_libraries(WormProfiler
@@ -29,6 +31,7 @@ target_include_directories(WormProfiler
         src
         src/ui
         src/io
+        src/preprocessing
     )
 
 install(TARGETS WormProfiler

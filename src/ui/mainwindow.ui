@@ -42,7 +42,7 @@
       <x>-1</x>
       <y>-1</y>
       <width>801</width>
-      <height>541</height>
+      <height>481</height>
      </rect>
     </property>
     <layout class="QHBoxLayout" name="horizontalLayout">
@@ -77,8 +77,8 @@
    <widget class="QCheckBox" name="normalizeCheckBox">
     <property name="geometry">
      <rect>
-      <x>130</x>
-      <y>540</y>
+      <x>60</x>
+      <y>510</y>
       <width>194</width>
       <height>20</height>
      </rect>
@@ -93,8 +93,8 @@
    <widget class="QSlider" name="blurSlider">
     <property name="geometry">
      <rect>
-      <x>350</x>
-      <y>540</y>
+      <x>300</x>
+      <y>510</y>
       <width>160</width>
       <height>16</height>
      </rect>
@@ -112,14 +112,52 @@
    <widget class="QLabel" name="label">
     <property name="geometry">
      <rect>
-      <x>530</x>
-      <y>540</y>
+      <x>360</x>
+      <y>530</y>
       <width>49</width>
       <height>16</height>
      </rect>
     </property>
     <property name="text">
      <string>Blur</string>
+    </property>
+   </widget>
+   <widget class="QCheckBox" name="resizeCheckBox">
+    <property name="geometry">
+     <rect>
+      <x>590</x>
+      <y>500</y>
+      <width>92</width>
+      <height>20</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Resize image</string>
+    </property>
+    <property name="checked">
+     <bool>true</bool>
+    </property>
+   </widget>
+   <widget class="QSlider" name="resizeSlider">
+    <property name="geometry">
+     <rect>
+      <x>560</x>
+      <y>520</y>
+      <width>160</width>
+      <height>16</height>
+     </rect>
+    </property>
+    <property name="minimum">
+     <number>10</number>
+    </property>
+    <property name="maximum">
+     <number>100</number>
+    </property>
+    <property name="value">
+     <number>50</number>
+    </property>
+    <property name="orientation">
+     <enum>Qt::Orientation::Horizontal</enum>
     </property>
    </widget>
   </widget>

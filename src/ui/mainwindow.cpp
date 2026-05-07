@@ -9,7 +9,7 @@
 #include <QDebug>
 #include <QSlider>
 #include <QCheckBox>
-#include <Qdir>
+#include <QDir>
 #include <QFileInfo>
 #include <QFileInfoList>
 
@@ -27,6 +27,8 @@ MainWindow::MainWindow(QWidget *parent)
     connect(ui->actionSave_Processed_Image, &QAction::triggered, this, &MainWindow::saveProcessedImage);
     connect(ui->actionLoad_Mask, &QAction::triggered, this, &MainWindow::loadMask); //not sure, revisit
     connect(ui->actionBatch_Preprocess_Folder,&QAction::triggered, this, &MainWindow::batchPreprocessFolder);
+    connect(ui->resizeSlider, &QSlider::valueChanged, this, &MainWindow::updateProcessedImage);
+    connect(ui->resizeCheckBox, &QCheckBox::toggled, this, &MainWindow::updateProcessedImage);
 }
 
 MainWindow::~MainWindow()
@@ -78,16 +80,23 @@ void MainWindow::updateProcessedImage()
 
     int blurStrength = ui->blurSlider->value();
     bool normalizeEnabled = ui->normalizeCheckBox->isChecked();
+    bool resizeEnabled = ui->resizeCheckBox->isChecked();
+    double scale = ui->resizeSlider->value() / 100.0;
 
     m_currentProcessedImage = m_preprocessingPipeline->preprocess(
         m_currentOriginalImage,
         blurStrength,
-        normalizeEnabled
+        normalizeEnabled,
+        resizeEnabled,
+        scale
         );
 
     if (m_currentProcessedImage.empty()) {
         return;
     }
+
+    qDebug() << "Processed image:" << m_currentProcessedImage.cols
+             << "x" << m_currentProcessedImage.rows;
 
     QImage processedQImage = m_imageLoader->matToQImage(m_currentProcessedImage);
 
@@ -233,6 +242,8 @@ void MainWindow::batchPreprocessFolder()
 
     int blurStrength = ui->blurSlider->value();
     bool normalizeEnabled = ui->normalizeCheckBox->isChecked();
+    bool resizeEnabled = ui->resizeCheckBox->isChecked();
+    double scale = ui->resizeSlider->value() / 100.0;
 
     int successCount = 0;
     int failCount = 0;
@@ -250,7 +261,9 @@ void MainWindow::batchPreprocessFolder()
         cv::Mat processed = m_preprocessingPipeline->preprocess(
             image,
             blurStrength,
-            normalizeEnabled
+            normalizeEnabled,
+            resizeEnabled,
+            scale
             );
 
         if (processed.empty()) {

@@ -10,12 +10,15 @@ public:
 
     cv::Mat preprocess(const cv::Mat &inputImage,
                        int blurStrength,
-                       bool normalizeEnabled) const;
+                       bool normalizeEnabled,
+                       bool resizeEnabled,
+                       double scale) const;
 
 private:
     cv::Mat convertToGrayscale(const cv::Mat &inputImage) const;
     cv::Mat applyGaussianBlur(const cv::Mat &inputImage, int blurStrength) const;
     cv::Mat normalizeIntensity(const cv::Mat &inputImage) const;
+    cv::Mat resizeImage(const cv::Mat &inputImage, double scale) const;
 };
 
 #endif // PREPROCESSINGPIPELINE_H

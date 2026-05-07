@@ -2,10 +2,19 @@
 
 cv::Mat PreprocessingPipeline::preprocess(const cv::Mat &inputImage,
                                           int blurStrength,
-                                          bool normalizeEnabled) const
+                                          bool normalizeEnabled,
+                                          bool resizeEnabled,
+                                          double scale) const
 {
     if (inputImage.empty()) {
         return cv::Mat();
+    }
+
+
+    cv::Mat working = inputImage;
+
+    if (resizeEnabled && scale > 0.0 && scale < 1.0) {
+        working = resizeImage(working, scale);
     }
 
     cv::Mat gray = convertToGrayscale(inputImage);
@@ -55,4 +64,15 @@ cv::Mat PreprocessingPipeline::normalizeIntensity(const cv::Mat &inputImage) con
     cv::Mat normalized;
     cv::normalize(inputImage, normalized, 0, 255, cv::NORM_MINMAX);
     return normalized;
+}
+
+cv::Mat PreprocessingPipeline::resizeImage(const cv::Mat &inputImage, double scale) const
+{
+    if (inputImage.empty()){
+        return cv::Mat();
+    }
+
+    cv::Mat resized;
+    cv::resize(inputImage, resized, cv::Size(), scale, scale, cv::INTER_AREA);
+    return resized;
 }

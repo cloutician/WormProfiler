@@ -21,8 +21,11 @@ public:
     ~MainWindow();
 
 private slots:
+    void loadMask();
     void openImage();
     void saveProcessedImage();
+    void updateOverlay(); // not sure
+    void batchPreprocessFolder();
 
 private:
     void updateProcessedImage();
@@ -32,6 +35,7 @@ private:
     PreprocessingPipeline *m_preprocessingPipeline;
     cv::Mat m_currentOriginalImage;
     cv::Mat m_currentProcessedImage;
+    cv::Mat m_currentMask;
 };
 
 #endif // MAINWINDOW_H

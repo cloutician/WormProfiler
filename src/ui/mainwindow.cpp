@@ -29,6 +29,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(ui->actionBatch_Preprocess_Folder,&QAction::triggered, this, &MainWindow::batchPreprocessFolder);
     connect(ui->resizeSlider, &QSlider::valueChanged, this, &MainWindow::updateProcessedImage);
     connect(ui->resizeCheckBox, &QCheckBox::toggled, this, &MainWindow::updateProcessedImage);
+    connect(ui->grayscaleCheckBox, &QCheckBox::toggled, this, &MainWindow::updateProcessedImage);
 }
 
 MainWindow::~MainWindow()
@@ -82,13 +83,15 @@ void MainWindow::updateProcessedImage()
     bool normalizeEnabled = ui->normalizeCheckBox->isChecked();
     bool resizeEnabled = ui->resizeCheckBox->isChecked();
     double scale = ui->resizeSlider->value() / 100.0;
+    bool grayscaleEnabled = ui->grayscaleCheckBox->isChecked();
 
     m_currentProcessedImage = m_preprocessingPipeline->preprocess(
         m_currentOriginalImage,
         blurStrength,
         normalizeEnabled,
         resizeEnabled,
-        scale
+        scale,
+        grayscaleEnabled
         );
 
     if (m_currentProcessedImage.empty()) {
@@ -244,6 +247,7 @@ void MainWindow::batchPreprocessFolder()
     bool normalizeEnabled = ui->normalizeCheckBox->isChecked();
     bool resizeEnabled = ui->resizeCheckBox->isChecked();
     double scale = ui->resizeSlider->value() / 100.0;
+    bool grayscaleEnabled = ui->grayscaleCheckBox->isChecked();
 
     int successCount = 0;
     int failCount = 0;
@@ -263,7 +267,8 @@ void MainWindow::batchPreprocessFolder()
             blurStrength,
             normalizeEnabled,
             resizeEnabled,
-            scale
+            scale,
+            grayscaleEnabled
             );
 
         if (processed.empty()) {

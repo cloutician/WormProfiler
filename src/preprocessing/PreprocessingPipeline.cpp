@@ -4,7 +4,8 @@ cv::Mat PreprocessingPipeline::preprocess(const cv::Mat &inputImage,
                                           int blurStrength,
                                           bool normalizeEnabled,
                                           bool resizeEnabled,
-                                          double scale) const
+                                          double scale,
+                                          bool grayscaleEnabled) const
 {
     if (inputImage.empty()) {
         return cv::Mat();
@@ -17,8 +18,11 @@ cv::Mat PreprocessingPipeline::preprocess(const cv::Mat &inputImage,
         working = resizeImage(working, scale);
     }
 
-    cv::Mat gray = convertToGrayscale(inputImage);
-    cv::Mat blurred = applyGaussianBlur(gray, blurStrength);
+    if (grayscaleEnabled) {
+        working = convertToGrayscale(working);
+    }
+
+    cv::Mat blurred = applyGaussianBlur(working, blurStrength);
 
     if (normalizeEnabled) {
         return normalizeIntensity(blurred);

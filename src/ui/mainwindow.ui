@@ -77,8 +77,8 @@
    <widget class="QCheckBox" name="normalizeCheckBox">
     <property name="geometry">
      <rect>
-      <x>60</x>
-      <y>510</y>
+      <x>10</x>
+      <y>490</y>
       <width>194</width>
       <height>20</height>
      </rect>
@@ -93,8 +93,8 @@
    <widget class="QSlider" name="blurSlider">
     <property name="geometry">
      <rect>
-      <x>300</x>
-      <y>510</y>
+      <x>280</x>
+      <y>500</y>
       <width>160</width>
       <height>16</height>
      </rect>
@@ -112,8 +112,8 @@
    <widget class="QLabel" name="label">
     <property name="geometry">
      <rect>
-      <x>360</x>
-      <y>530</y>
+      <x>340</x>
+      <y>520</y>
       <width>49</width>
       <height>16</height>
      </rect>
@@ -125,8 +125,8 @@
    <widget class="QCheckBox" name="resizeCheckBox">
     <property name="geometry">
      <rect>
-      <x>590</x>
-      <y>500</y>
+      <x>620</x>
+      <y>490</y>
       <width>92</width>
       <height>20</height>
      </rect>
@@ -141,7 +141,7 @@
    <widget class="QSlider" name="resizeSlider">
     <property name="geometry">
      <rect>
-      <x>560</x>
+      <x>580</x>
       <y>520</y>
       <width>160</width>
       <height>16</height>
@@ -158,6 +158,22 @@
     </property>
     <property name="orientation">
      <enum>Qt::Orientation::Horizontal</enum>
+    </property>
+   </widget>
+   <widget class="QCheckBox" name="grayscaleCheckBox">
+    <property name="geometry">
+     <rect>
+      <x>10</x>
+      <y>530</y>
+      <width>131</width>
+      <height>20</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Convert to grayscale</string>
+    </property>
+    <property name="checked">
+     <bool>true</bool>
     </property>
    </widget>
   </widget>

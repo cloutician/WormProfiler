@@ -12,7 +12,8 @@ public:
                        int blurStrength,
                        bool normalizeEnabled,
                        bool resizeEnabled,
-                       double scale) const;
+                       double scale,
+                       bool grayscaleEnabled) const;
 
 private:
     cv::Mat convertToGrayscale(const cv::Mat &inputImage) const;

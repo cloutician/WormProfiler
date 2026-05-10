@@ -5,12 +5,12 @@ cv::Mat PreprocessingPipeline::preprocess(const cv::Mat &inputImage,
                                           bool normalizeEnabled,
                                           bool resizeEnabled,
                                           double scale,
-                                          bool grayscaleEnabled) const
+                                          bool grayscaleEnabled,
+                                          bool claheEnabled) const
 {
     if (inputImage.empty()) {
         return cv::Mat();
     }
-
 
     cv::Mat working = inputImage;
 
@@ -23,6 +23,10 @@ cv::Mat PreprocessingPipeline::preprocess(const cv::Mat &inputImage,
     }
 
     cv::Mat blurred = applyGaussianBlur(working, blurStrength);
+
+    if (claheEnabled) {
+        blurred = applyCLAHE(blurred);
+    }
 
     if (normalizeEnabled) {
         return normalizeIntensity(blurred);
@@ -79,4 +83,27 @@ cv::Mat PreprocessingPipeline::resizeImage(const cv::Mat &inputImage, double sca
     cv::Mat resized;
     cv::resize(inputImage, resized, cv::Size(), scale, scale, cv::INTER_AREA);
     return resized;
+}
+
+cv::Mat PreprocessingPipeline::applyCLAHE(const cv::Mat &inputImage) const
+{
+    if (inputImage.empty()) {
+        return cv::Mat();
+    }
+
+    cv::Mat gray;
+
+    if (inputImage.channels() == 1) {
+        gray = inputImage.clone();
+    } else {
+        cv::cvtColor(inputImage, gray, cv::COLOR_BGR2GRAY);
+    }
+
+    cv::Mat output;
+    cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE();
+    clahe->setClipLimit(2.0);
+    clahe->setTilesGridSize(cv::Size(8, 8));
+    clahe->apply(gray, output);
+
+    return output;
 }

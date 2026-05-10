@@ -30,6 +30,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(ui->resizeSlider, &QSlider::valueChanged, this, &MainWindow::updateProcessedImage);
     connect(ui->resizeCheckBox, &QCheckBox::toggled, this, &MainWindow::updateProcessedImage);
     connect(ui->grayscaleCheckBox, &QCheckBox::toggled, this, &MainWindow::updateProcessedImage);
+    connect(ui->claheCheckBox, &QCheckBox::toggled, this, &MainWindow::updateProcessedImage);
 }
 
 MainWindow::~MainWindow()
@@ -84,6 +85,7 @@ void MainWindow::updateProcessedImage()
     bool resizeEnabled = ui->resizeCheckBox->isChecked();
     double scale = ui->resizeSlider->value() / 100.0;
     bool grayscaleEnabled = ui->grayscaleCheckBox->isChecked();
+    bool claheEnabled = ui->claheCheckBox->isChecked();
 
     m_currentProcessedImage = m_preprocessingPipeline->preprocess(
         m_currentOriginalImage,
@@ -91,7 +93,8 @@ void MainWindow::updateProcessedImage()
         normalizeEnabled,
         resizeEnabled,
         scale,
-        grayscaleEnabled
+        grayscaleEnabled,
+        claheEnabled
         );
 
     if (m_currentProcessedImage.empty()) {
@@ -248,6 +251,7 @@ void MainWindow::batchPreprocessFolder()
     bool resizeEnabled = ui->resizeCheckBox->isChecked();
     double scale = ui->resizeSlider->value() / 100.0;
     bool grayscaleEnabled = ui->grayscaleCheckBox->isChecked();
+    bool claheEnabled = ui->claheCheckBox->isChecked();
 
     int successCount = 0;
     int failCount = 0;
@@ -268,7 +272,8 @@ void MainWindow::batchPreprocessFolder()
             normalizeEnabled,
             resizeEnabled,
             scale,
-            grayscaleEnabled
+            grayscaleEnabled,
+            claheEnabled
             );
 
         if (processed.empty()) {

@@ -208,6 +208,8 @@
     <addaction name="actionLoad_Mask"/>
     <addaction name="separator"/>
     <addaction name="actionBatch_Preprocess_Folder"/>
+    <addaction name="separator"/>
+    <addaction name="actionSave_Preprocessing_Profile"/>
    </widget>
    <addaction name="menuFile"/>
   </widget>
@@ -230,6 +232,11 @@
   <action name="actionBatch_Preprocess_Folder">
    <property name="text">
     <string>Batch Preprocess Folder</string>
+   </property>
+  </action>
+  <action name="actionSave_Preprocessing_Profile">
+   <property name="text">
+    <string>Save Preprocessing Profile</string>
    </property>
   </action>
  </widget>

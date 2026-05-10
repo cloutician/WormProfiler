@@ -10,8 +10,11 @@
 #include <QSlider>
 #include <QCheckBox>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QFileInfoList>
+#include <QTextStream>
+#include <QDateTime>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -31,6 +34,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(ui->resizeCheckBox, &QCheckBox::toggled, this, &MainWindow::updateProcessedImage);
     connect(ui->grayscaleCheckBox, &QCheckBox::toggled, this, &MainWindow::updateProcessedImage);
     connect(ui->claheCheckBox, &QCheckBox::toggled, this, &MainWindow::updateProcessedImage);
+    connect(ui->actionSave_Preprocessing_Profile, &QAction::triggered, this, &MainWindow::saveProcessedImage);
 }
 
 MainWindow::~MainWindow()
@@ -298,4 +302,41 @@ void MainWindow::batchPreprocessFolder()
         "Batch Preprocessing Complete",
         QString("Processed: %1\nFailed: %2").arg(successCount).arg(failCount)
         );
+}
+
+void MainWindow::savePreprocessingProfile()
+{
+    QString fileName = QFileDialog::getSaveFileName(
+        this,
+        "Save Preprocessing Profile",
+        "",
+        "Text File (*.txt);;JSON File (*.json)"
+        );
+
+    if (fileName.isEmpty()) {
+        return;
+    }
+
+    QFile file(fileName);
+
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QMessageBox::warning(this, "Error", "Failed to create profile file.");
+        return;
+    }
+
+    QTextStream out(&file);
+
+    out << "WormProfiler Preprocessing Profile\n";
+    out << "Created: " << QDateTime::currentDateTime().toString(Qt::ISODate) << "\n\n";
+
+    out << "Blur strength: " << ui->blurSlider->value() << "\n";
+    out << "Normalize intensity: " << (ui->normalizeCheckBox->isChecked() ? "true" : "false") << "\n";
+    out << "Resize enabled: " << (ui->resizeCheckBox->isChecked() ? "true" : "false") << "\n";
+    out << "Resize scale: " << ui->resizeSlider->value() / 100.0 << "\n";
+    out << "Grayscale enabled: " << (ui->grayscaleCheckBox->isChecked() ? "true" : "false") << "\n";
+    out << "CLAHE enabled: " << (ui->claheCheckBox->isChecked() ? "true" : "false") << "\n";
+
+    file.close();
+
+    QMessageBox::information(this, "Saved", "Preprocessing profile saved successfully.");
 }

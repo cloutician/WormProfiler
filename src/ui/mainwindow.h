@@ -26,6 +26,7 @@ private slots:
     void saveProcessedImage();
     void updateOverlay(); // not sure
     void batchPreprocessFolder();
+    void savePreprocessingProfile();
 
 private:
     void updateProcessedImage();

@@ -9,6 +9,8 @@ qt_standard_project_setup()
 qt_add_executable(WormProfiler
     WIN32 MACOSX_BUNDLE
     main.cpp
+    src/ui/CropReviewDialog.cpp
+    src/ui/CropReviewDialog.h
     src/ui/mainwindow.cpp
     src/ui/mainwindow.h
     src/ui/mainwindow.ui
@@ -16,6 +18,8 @@ qt_add_executable(WormProfiler
     src/io/ImageLoader.h
     src/preprocessing/PreprocessingPipeline.h
     src/preprocessing/PreprocessingPipeline.cpp
+    src/preprocessing/WormCropper.h
+    src/preprocessing/WormCropper.cpp
 )
 
 target_link_libraries(WormProfiler

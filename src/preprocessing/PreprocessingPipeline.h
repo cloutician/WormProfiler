@@ -14,9 +14,13 @@ public:
                        bool resizeEnabled,
                        double scale,
                        bool grayscaleEnabled,
-                       bool claheEnabled) const;
+                       bool claheEnabled,
+                       bool autoCropEnabled,
+                       int cropMarginPixels) const;
 
 private:
+    cv::Mat cropToWormArea(const cv::Mat &inputImage, int marginPixels) const;
+    cv::Rect detectWormBounds(const cv::Mat &inputImage) const;
     cv::Mat convertToGrayscale(const cv::Mat &inputImage) const;
     cv::Mat applyGaussianBlur(const cv::Mat &inputImage, int blurStrength) const;
     cv::Mat normalizeIntensity(const cv::Mat &inputImage) const;

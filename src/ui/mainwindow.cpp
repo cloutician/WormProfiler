@@ -1,18 +1,24 @@
 #include "mainwindow.h"
+#include "CropReviewDialog.h"
 #include "ImageLoader.h"
 #include "./ui_mainwindow.h"
 #include "PreprocessingPipeline.h"
+#include "WormCropper.h"
 
+#include <QAction>
+#include <QApplication>
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QPixmap>
 #include <QDebug>
 #include <QSlider>
 #include <QCheckBox>
+#include <QSpinBox>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QFileInfoList>
+#include <QProgressDialog>
 #include <QTextStream>
 #include <QDateTime>
 
@@ -30,11 +36,16 @@ MainWindow::MainWindow(QWidget *parent)
     connect(ui->actionSave_Processed_Image, &QAction::triggered, this, &MainWindow::saveProcessedImage);
     connect(ui->actionLoad_Mask, &QAction::triggered, this, &MainWindow::loadMask); //not sure, revisit
     connect(ui->actionBatch_Preprocess_Folder,&QAction::triggered, this, &MainWindow::batchPreprocessFolder);
+    auto *applyModelCropAction = new QAction("Apply Crop Model...", this);
+    ui->menuFile->insertAction(ui->actionBatch_Preprocess_Folder, applyModelCropAction);
+    connect(applyModelCropAction, &QAction::triggered, this, &MainWindow::applyModelCropFolder);
     connect(ui->resizeSlider, &QSlider::valueChanged, this, &MainWindow::updateProcessedImage);
     connect(ui->resizeCheckBox, &QCheckBox::toggled, this, &MainWindow::updateProcessedImage);
     connect(ui->grayscaleCheckBox, &QCheckBox::toggled, this, &MainWindow::updateProcessedImage);
     connect(ui->claheCheckBox, &QCheckBox::toggled, this, &MainWindow::updateProcessedImage);
-    connect(ui->actionSave_Preprocessing_Profile, &QAction::triggered, this, &MainWindow::saveProcessedImage);
+    connect(ui->autoCropCheckBox, &QCheckBox::toggled, this, &MainWindow::updateProcessedImage);
+    connect(ui->cropMarginSpinBox, qOverload<int>(&QSpinBox::valueChanged), this, &MainWindow::updateProcessedImage);
+    connect(ui->actionSave_Preprocessing_Profile, &QAction::triggered, this, &MainWindow::savePreprocessingProfile);
 }
 
 MainWindow::~MainWindow()
@@ -90,6 +101,8 @@ void MainWindow::updateProcessedImage()
     double scale = ui->resizeSlider->value() / 100.0;
     bool grayscaleEnabled = ui->grayscaleCheckBox->isChecked();
     bool claheEnabled = ui->claheCheckBox->isChecked();
+    bool autoCropEnabled = ui->autoCropCheckBox->isChecked();
+    int cropMarginPixels = ui->cropMarginSpinBox->value();
 
     m_currentProcessedImage = m_preprocessingPipeline->preprocess(
         m_currentOriginalImage,
@@ -98,7 +111,9 @@ void MainWindow::updateProcessedImage()
         resizeEnabled,
         scale,
         grayscaleEnabled,
-        claheEnabled
+        claheEnabled,
+        autoCropEnabled,
+        cropMarginPixels
         );
 
     if (m_currentProcessedImage.empty()) {
@@ -256,6 +271,8 @@ void MainWindow::batchPreprocessFolder()
     double scale = ui->resizeSlider->value() / 100.0;
     bool grayscaleEnabled = ui->grayscaleCheckBox->isChecked();
     bool claheEnabled = ui->claheCheckBox->isChecked();
+    bool autoCropEnabled = ui->autoCropCheckBox->isChecked();
+    int cropMarginPixels = ui->cropMarginSpinBox->value();
 
     int successCount = 0;
     int failCount = 0;
@@ -277,7 +294,9 @@ void MainWindow::batchPreprocessFolder()
             resizeEnabled,
             scale,
             grayscaleEnabled,
-            claheEnabled
+            claheEnabled,
+            autoCropEnabled,
+            cropMarginPixels
             );
 
         if (processed.empty()) {
@@ -302,6 +321,118 @@ void MainWindow::batchPreprocessFolder()
         "Batch Preprocessing Complete",
         QString("Processed: %1\nFailed: %2").arg(successCount).arg(failCount)
         );
+}
+
+void MainWindow::applyModelCropFolder()
+{
+    const QString defaultModelPath = "C:/Users/georg/Desktop/model_output/worm_crop_model.onnx";
+    const QFileInfo defaultModelInfo(defaultModelPath);
+    const QString modelStartPath = defaultModelInfo.exists() ? defaultModelInfo.absoluteFilePath() : QDir::homePath();
+    const QString modelPath = QFileDialog::getOpenFileName(
+        this,
+        "Select Worm Crop ONNX Model",
+        modelStartPath,
+        "ONNX Model (*.onnx);;All Files (*.*)"
+        );
+
+    if (modelPath.isEmpty()) {
+        return;
+    }
+
+    WormCropper cropper;
+    std::string errorMessage;
+
+    if (!cropper.loadModel(modelPath.toStdString(), &errorMessage)) {
+        QMessageBox::warning(this,
+                             "Model Load Failed",
+                             QString("Failed to load crop model:\n%1").arg(QString::fromStdString(errorMessage)));
+        return;
+    }
+
+    const QString inputFolder = QFileDialog::getExistingDirectory(
+        this,
+        "Select Raw Images to Crop"
+        );
+
+    if (inputFolder.isEmpty()) {
+        return;
+    }
+
+    QDir inputDir(inputFolder);
+    QStringList filters;
+    filters << "*.png" << "*.jpg" << "*.jpeg" << "*.bmp" << "*.tif" << "*.tiff";
+
+    const QFileInfoList files = inputDir.entryInfoList(
+        filters,
+        QDir::Files,
+        QDir::Name
+        );
+
+    if (files.isEmpty()) {
+        QMessageBox::warning(this, "No Images", "No supported image files found.");
+        return;
+    }
+
+    QList<CropPreviewItem> cropItems;
+    int skippedCount = 0;
+    const int cropMarginPixels = ui->cropMarginSpinBox->value();
+
+    QProgressDialog progress("Applying crop model...", "Cancel", 0, files.size(), this);
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setMinimumDuration(0);
+
+    for (int i = 0; i < files.size(); ++i) {
+        progress.setValue(i);
+        QApplication::processEvents();
+
+        if (progress.wasCanceled()) {
+            break;
+        }
+
+        const QFileInfo &fileInfo = files[i];
+        const QString inputPath = fileInfo.absoluteFilePath();
+        const cv::Mat image = m_imageLoader->loadWithOpenCV(inputPath);
+
+        if (image.empty()) {
+            skippedCount++;
+            continue;
+        }
+
+        WormCropPrediction prediction = cropper.predictCrop(image, cropMarginPixels);
+        QRect cropRect(prediction.cropRect.x,
+                       prediction.cropRect.y,
+                       prediction.cropRect.width,
+                       prediction.cropRect.height);
+
+        if (cropRect.isEmpty()) {
+            cropRect = QRect(0, 0, image.cols, image.rows);
+        }
+
+        CropPreviewItem item;
+        item.imagePath = inputPath;
+        item.imageSize = QSize(image.cols, image.rows);
+        item.cropRect = cropRect;
+        item.originalCropRect = cropRect;
+        item.predictionFound = prediction.found;
+        item.statusText = QString::fromStdString(prediction.message);
+        cropItems.append(item);
+    }
+
+    progress.setValue(files.size());
+
+    if (cropItems.isEmpty()) {
+        QMessageBox::warning(this, "No Crops", "No images could be loaded for crop review.");
+        return;
+    }
+
+    if (skippedCount > 0) {
+        QMessageBox::information(this,
+                                 "Some Images Skipped",
+                                 QString("Skipped %1 image(s) that could not be loaded.").arg(skippedCount));
+    }
+
+    CropReviewDialog reviewDialog(cropItems, this);
+    reviewDialog.exec();
 }
 
 void MainWindow::savePreprocessingProfile()
@@ -335,6 +466,8 @@ void MainWindow::savePreprocessingProfile()
     out << "Resize scale: " << ui->resizeSlider->value() / 100.0 << "\n";
     out << "Grayscale enabled: " << (ui->grayscaleCheckBox->isChecked() ? "true" : "false") << "\n";
     out << "CLAHE enabled: " << (ui->claheCheckBox->isChecked() ? "true" : "false") << "\n";
+    out << "Auto crop worm area: " << (ui->autoCropCheckBox->isChecked() ? "true" : "false") << "\n";
+    out << "Crop margin pixels: " << ui->cropMarginSpinBox->value() << "\n";
 
     file.close();
 

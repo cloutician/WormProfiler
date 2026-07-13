@@ -67,7 +67,7 @@ After model-assisted cropping, each proposed crop opens in a review dialog. The 
 Reviewed crops are exported as PNG files using the approved crop rectangle. The exported image keeps its actual crop dimensions; WormProfiler does not pad crops to a square canvas. This means rectangular and squarer worms can be passed to ilastik as independent 2D images.
 
 <p align="center">
-  <img src="docs/screenshots/exported-cropso.png" alt="Exported WormProfiler crop PNGs ready for downstream segmentation" width="900">
+  <img src="docs/screenshots/exported-crops.png" alt="Exported WormProfiler crop PNGs ready for downstream segmentation" width="900">
 </p>
 
 ### Mask loading and overlay preview

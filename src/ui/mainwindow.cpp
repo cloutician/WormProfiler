@@ -10,17 +10,55 @@
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QPixmap>
+#include <QPainter>
 #include <QDebug>
+#include <QLabel>
+#include <QResizeEvent>
 #include <QSlider>
 #include <QCheckBox>
 #include <QSpinBox>
+#include <QVBoxLayout>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QFileInfoList>
 #include <QProgressDialog>
+#include <QPushButton>
 #include <QTextStream>
 #include <QDateTime>
+
+namespace {
+constexpr QColor PreviewBackgroundColor(17, 24, 39);
+
+QPixmap createLetterboxedPixmap(const QImage &image, const QSize &canvasSize)
+{
+    if (canvasSize.isEmpty()) {
+        return QPixmap();
+    }
+
+    QPixmap canvas(canvasSize);
+    canvas.fill(PreviewBackgroundColor);
+
+    if (image.isNull()) {
+        return canvas;
+    }
+
+    QImage scaledImage = image.scaled(
+        canvasSize,
+        Qt::KeepAspectRatio,
+        Qt::SmoothTransformation
+        );
+
+    const QPoint topLeft(
+        (canvasSize.width() - scaledImage.width()) / 2,
+        (canvasSize.height() - scaledImage.height()) / 2
+        );
+
+    QPainter painter(&canvas);
+    painter.drawImage(topLeft, scaledImage);
+    return canvas;
+}
+}
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -29,16 +67,24 @@ MainWindow::MainWindow(QWidget *parent)
     , m_preprocessingPipeline(new PreprocessingPipeline)
 {
     ui->setupUi(this);
+    ui->mainLayout->setStretch(2, 1);
+    ui->originalImageLabel->setMargin(0);
+    ui->processedImageLabel->setMargin(0);
 
     connect(ui->actionOpen_Image, &QAction::triggered, this, &MainWindow::openImage);
+    connect(ui->openImageButton, &QPushButton::clicked, this, &MainWindow::openImage);
     connect(ui->blurSlider, &QSlider::valueChanged, this, &MainWindow::updateProcessedImage);
     connect(ui->normalizeCheckBox, &QCheckBox::toggled, this, &MainWindow::updateProcessedImage);
     connect(ui->actionSave_Processed_Image, &QAction::triggered, this, &MainWindow::saveProcessedImage);
+    connect(ui->saveProcessedButton, &QPushButton::clicked, this, &MainWindow::saveProcessedImage);
     connect(ui->actionLoad_Mask, &QAction::triggered, this, &MainWindow::loadMask); //not sure, revisit
+    connect(ui->loadMaskButton, &QPushButton::clicked, this, &MainWindow::loadMask);
     connect(ui->actionBatch_Preprocess_Folder,&QAction::triggered, this, &MainWindow::batchPreprocessFolder);
+    connect(ui->batchPreprocessButton, &QPushButton::clicked, this, &MainWindow::batchPreprocessFolder);
     auto *applyModelCropAction = new QAction("Apply Crop Model...", this);
     ui->menuFile->insertAction(ui->actionBatch_Preprocess_Folder, applyModelCropAction);
     connect(applyModelCropAction, &QAction::triggered, this, &MainWindow::applyModelCropFolder);
+    connect(ui->applyModelCropButton, &QPushButton::clicked, this, &MainWindow::applyModelCropFolder);
     connect(ui->resizeSlider, &QSlider::valueChanged, this, &MainWindow::updateProcessedImage);
     connect(ui->resizeCheckBox, &QCheckBox::toggled, this, &MainWindow::updateProcessedImage);
     connect(ui->grayscaleCheckBox, &QCheckBox::toggled, this, &MainWindow::updateProcessedImage);
@@ -46,6 +92,8 @@ MainWindow::MainWindow(QWidget *parent)
     connect(ui->autoCropCheckBox, &QCheckBox::toggled, this, &MainWindow::updateProcessedImage);
     connect(ui->cropMarginSpinBox, qOverload<int>(&QSpinBox::valueChanged), this, &MainWindow::updateProcessedImage);
     connect(ui->actionSave_Preprocessing_Profile, &QAction::triggered, this, &MainWindow::savePreprocessingProfile);
+
+    m_uiReady = true;
 }
 
 MainWindow::~MainWindow()
@@ -53,6 +101,56 @@ MainWindow::~MainWindow()
     delete m_preprocessingPipeline;
     delete m_imageLoader;
     delete ui;
+}
+
+void MainWindow::resizeEvent(QResizeEvent *event)
+{
+    QMainWindow::resizeEvent(event);
+
+    if (m_uiReady) {
+        refreshImagePreviews();
+    }
+}
+
+void MainWindow::displayMat(QLabel *label, const cv::Mat &mat) const
+{
+    if (label == nullptr || mat.empty()) {
+        return;
+    }
+
+    QImage image = m_imageLoader->matToQImage(mat);
+
+    if (image.isNull()) {
+        return;
+    }
+
+    QSize targetSize = label->contentsRect().size();
+
+    if (targetSize.isEmpty()) {
+        targetSize = label->size();
+    }
+
+    if (targetSize.isEmpty()) {
+        return;
+    }
+
+    label->setText(QString());
+    label->setPixmap(createLetterboxedPixmap(image, targetSize));
+}
+
+void MainWindow::refreshImagePreviews()
+{
+    if (!m_uiReady) {
+        return;
+    }
+
+    displayMat(ui->originalImageLabel, m_currentOriginalImage);
+
+    if (!m_currentOverlayImage.empty()) {
+        displayMat(ui->processedImageLabel, m_currentOverlayImage);
+    } else {
+        displayMat(ui->processedImageLabel, m_currentProcessedImage);
+    }
 }
 
 void MainWindow::openImage()
@@ -75,18 +173,10 @@ void MainWindow::openImage()
         return;
     }
 
-    QImage originalQImage = m_imageLoader->matToQImage(m_currentOriginalImage);
-
-    ui->originalImageLabel->setPixmap(
-        QPixmap::fromImage(originalQImage).scaled(
-            ui->originalImageLabel->size(),
-            Qt::KeepAspectRatio,
-            Qt::SmoothTransformation
-            )
-        );
+    m_currentMask.release();
+    m_currentOverlayImage.release();
 
     updateProcessedImage();
-    updateOverlay(); //not sure
 }
 
 void MainWindow::updateProcessedImage()
@@ -120,18 +210,12 @@ void MainWindow::updateProcessedImage()
         return;
     }
 
+    m_currentOverlayImage.release();
+
     qDebug() << "Processed image:" << m_currentProcessedImage.cols
              << "x" << m_currentProcessedImage.rows;
 
-    QImage processedQImage = m_imageLoader->matToQImage(m_currentProcessedImage);
-
-    ui->processedImageLabel->setPixmap(
-        QPixmap::fromImage(processedQImage).scaled(
-            ui->processedImageLabel->size(),
-            Qt::KeepAspectRatio,
-            Qt::SmoothTransformation
-            )
-        );
+    refreshImagePreviews();
 }
 
 void MainWindow::saveProcessedImage()
@@ -185,6 +269,7 @@ void MainWindow::loadMask()
     qDebug() << "Mask loaded:" << m_currentMask.cols << "x" << m_currentMask.rows
              << "channels:" << m_currentMask.channels();
 
+    m_currentOverlayImage.release();
     updateOverlay();
 }
 
@@ -210,6 +295,11 @@ void MainWindow::updateOverlay()
         maskGray = m_currentMask.clone();
     }
 
+    if (colorOriginal.size() != maskGray.size()) {
+        QMessageBox::warning(this, "Mask Size Mismatch", "The mask dimensions do not match the current image.");
+        return;
+    }
+
     cv::Mat coloredMask;
     cv::applyColorMap(maskGray, coloredMask, cv::COLORMAP_JET);
 
@@ -218,15 +308,8 @@ void MainWindow::updateOverlay()
     cv::Mat overlay;
     cv::addWeighted(colorOriginal, 1.0, coloredMask, alpha, 0, overlay);
 
-    QImage overlayQImage = m_imageLoader->matToQImage(overlay);
-
-    ui->processedImageLabel->setPixmap(
-        QPixmap::fromImage(overlayQImage).scaled(
-            ui->processedImageLabel->size(),
-            Qt::KeepAspectRatio,
-            Qt::SmoothTransformation
-            )
-        );
+    m_currentOverlayImage = overlay;
+    refreshImagePreviews();
 }
 
 void MainWindow::batchPreprocessFolder()

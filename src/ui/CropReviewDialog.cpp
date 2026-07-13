@@ -413,7 +413,7 @@ CropReviewDialog::CropReviewDialog(const QList<CropPreviewItem> &items, QWidget 
     m_nextButton = new QPushButton("Next", this);
     auto *resetButton = new QPushButton("Reset Crop", this);
     m_exportButton = new QPushButton("Export Crops...", this);
-    m_exportButton->setEnabled(false);
+    m_exportButton->setEnabled(!m_items.isEmpty());
 
     buttonLayout->addWidget(m_previousButton);
     buttonLayout->addWidget(m_nextButton);
@@ -451,10 +451,6 @@ void CropReviewDialog::setCurrentIndex(int index)
     }
 
     m_currentIndex = index;
-
-    if (m_currentIndex == m_items.size() - 1) {
-        m_hasReachedLastImage = true;
-    }
 
     loadCurrentImage();
     refreshNavigation();
@@ -656,7 +652,7 @@ void CropReviewDialog::refreshNavigation()
     }
 
     if (m_exportButton != nullptr) {
-        m_exportButton->setEnabled(m_hasReachedLastImage);
+        m_exportButton->setEnabled(!m_items.isEmpty());
     }
 }
 

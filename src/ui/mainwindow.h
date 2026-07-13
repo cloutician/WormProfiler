@@ -11,7 +11,9 @@ class MainWindow;
 QT_END_NAMESPACE
 
 class ImageLoader;
+class QLabel;
 class PreprocessingPipeline;
+class QResizeEvent;
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
@@ -19,6 +21,9 @@ class MainWindow : public QMainWindow
 public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
+
+protected:
+    void resizeEvent(QResizeEvent *event) override;
 
 private slots:
     void loadMask();
@@ -30,6 +35,8 @@ private slots:
     void savePreprocessingProfile();
 
 private:
+    void displayMat(QLabel *label, const cv::Mat &mat) const;
+    void refreshImagePreviews();
     void updateProcessedImage();
 
     Ui::MainWindow *ui;
@@ -37,7 +44,9 @@ private:
     PreprocessingPipeline *m_preprocessingPipeline;
     cv::Mat m_currentOriginalImage;
     cv::Mat m_currentProcessedImage;
+    cv::Mat m_currentOverlayImage;
     cv::Mat m_currentMask;
+    bool m_uiReady = false;
 };
 
 #endif // MAINWINDOW_H

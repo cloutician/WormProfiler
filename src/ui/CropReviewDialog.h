@@ -112,7 +112,6 @@ private:
     QPushButton *m_nextButton = nullptr;
     QPushButton *m_exportButton = nullptr;
     int m_currentIndex = -1;
-    bool m_hasReachedLastImage = false;
     bool m_updatingControls = false;
 };
 

@@ -1,8 +1,14 @@
 #include "ImageLoader.h"
+#include <QFile>
+#include <vector>
 
 cv::Mat ImageLoader::loadWithOpenCV(const QString &filePath) const
 {
-    return cv::imread(filePath.toStdString(), cv::IMREAD_UNCHANGED);
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly)) return {};
+    const QByteArray bytes = file.readAll();
+    if (bytes.isEmpty()) return {};
+    return cv::imdecode(std::vector<uchar>(bytes.begin(), bytes.end()), cv::IMREAD_UNCHANGED);
 }
 
 QImage ImageLoader::matToQImage(const cv::Mat &mat) const

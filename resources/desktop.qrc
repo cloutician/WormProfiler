@@ -1,0 +1,36 @@
+<RCC>
+    <qresource prefix="/icons">
+        <file alias="ruler.svg">icons/lucide/ruler.svg</file>
+        <file alias="calendar-days.svg">icons/lucide/calendar-days.svg</file>
+        <file alias="chevron-up-disabled.svg">icons/chevron-up-disabled.svg</file>
+        <file alias="chevron-down-disabled.svg">icons/chevron-down-disabled.svg</file>
+        <file alias="check.svg">icons/lucide/check.svg</file>
+        <file alias="chevron-down.svg">icons/lucide/chevron-down.svg</file>
+        <file alias="chevron-left.svg">icons/lucide/chevron-left.svg</file>
+        <file alias="chevron-right.svg">icons/lucide/chevron-right.svg</file>
+        <file alias="chevron-up.svg">icons/lucide/chevron-up.svg</file>
+        <file alias="circle-check.svg">icons/lucide/circle-check.svg</file>
+        <file alias="circle-x.svg">icons/lucide/circle-x.svg</file>
+        <file alias="copy.svg">icons/lucide/copy.svg</file>
+        <file alias="crop.svg">icons/lucide/crop.svg</file>
+        <file alias="download.svg">icons/lucide/download.svg</file>
+        <file alias="eraser.svg">icons/lucide/eraser.svg</file>
+        <file alias="flag.svg">icons/lucide/flag.svg</file>
+        <file alias="folder-open.svg">icons/lucide/folder-open.svg</file>
+        <file alias="folder-plus.svg">icons/lucide/folder-plus.svg</file>
+        <file alias="image.svg">icons/lucide/image.svg</file>
+        <file alias="images.svg">icons/lucide/images.svg</file>
+        <file alias="info.svg">icons/lucide/info.svg</file>
+        <file alias="layers-2.svg">icons/lucide/layers-2.svg</file>
+        <file alias="log-out.svg">icons/lucide/log-out.svg</file>
+        <file alias="maximize.svg">icons/lucide/maximize.svg</file>
+        <file alias="microscope.svg">icons/lucide/microscope.svg</file>
+        <file alias="rotate-ccw.svg">icons/lucide/rotate-ccw.svg</file>
+        <file alias="save.svg">icons/lucide/save.svg</file>
+        <file alias="scan.svg">icons/lucide/scan.svg</file>
+        <file alias="search.svg">icons/lucide/search.svg</file>
+        <file alias="sliders-horizontal.svg">icons/lucide/sliders-horizontal.svg</file>
+        <file alias="triangle-alert.svg">icons/lucide/triangle-alert.svg</file>
+        <file alias="x.svg">icons/lucide/x.svg</file>
+    </qresource>
+</RCC>

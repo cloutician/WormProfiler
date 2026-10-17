@@ -1,31 +1,64 @@
 cmake_minimum_required(VERSION 3.19)
 project(WormProfiler LANGUAGES CXX)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets)
-find_package(OpenCV REQUIRED)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets Concurrent Svg)
+find_package(OpenCV 4.9 REQUIRED)
 
 qt_standard_project_setup()
+set(CMAKE_AUTORCC ON)
 
-qt_add_executable(WormProfiler
-    WIN32 MACOSX_BUNDLE
-    main.cpp
-    src/ui/CropReviewDialog.cpp
-    src/ui/CropReviewDialog.h
+set(REVIEW_SOURCES
+    src/ui/CropReviewWorkspace.cpp
+    src/ui/CropReviewWorkspace.h
+    src/io/CropReviewSession.cpp
+    src/io/CropReviewSession.h
+    src/io/PreprocessingProfile.cpp
+    src/io/PreprocessingProfile.h
+)
+
+set(APP_SOURCES
     src/ui/mainwindow.cpp
     src/ui/mainwindow.h
     src/ui/mainwindow.ui
+    src/ui/ImageViewer.cpp
+    src/ui/ImageViewer.h
+    src/ui/DesktopStyle.cpp
+    src/ui/DesktopStyle.h
+    src/ui/DesktopIcons.cpp
+    src/ui/DesktopIcons.h
+    src/ui/WormProfileWorkspace.cpp
+    src/ui/WormProfileWorkspace.h
+    resources/desktop.qrc
     src/io/ImageLoader.cpp
     src/io/ImageLoader.h
+    src/io/WormProfile.cpp
+    src/io/WormProfile.h
     src/preprocessing/PreprocessingPipeline.h
     src/preprocessing/PreprocessingPipeline.cpp
     src/preprocessing/WormCropper.h
     src/preprocessing/WormCropper.cpp
+    src/preprocessing/ProcessingJobs.cpp
+    src/preprocessing/ProcessingJobs.h
 )
+
+qt_add_executable(WormProfiler WIN32 MACOSX_BUNDLE main.cpp ${REVIEW_SOURCES} ${APP_SOURCES})
+
+include(CTest)
+if(BUILD_TESTING)
+    find_package(Qt6 6.5 REQUIRED COMPONENTS Test)
+    qt_add_executable(WormProfilerTests tests/ReviewWorkflowTests.cpp ${REVIEW_SOURCES} ${APP_SOURCES})
+    target_include_directories(WormProfilerTests PRIVATE src src/io src/ui src/preprocessing ${OpenCV_INCLUDE_DIRS})
+    target_link_libraries(WormProfilerTests PRIVATE Qt::Widgets Qt::Test Qt::Concurrent Qt::Svg ${OpenCV_LIBS})
+    add_test(NAME ReviewWorkflow COMMAND WormProfilerTests -o -,txt)
+    set_tests_properties(ReviewWorkflow PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 45)
+endif()
 
 target_link_libraries(WormProfiler
     PRIVATE
         Qt::Core
         Qt::Widgets
+        Qt::Concurrent
+        Qt::Svg
         ${OpenCV_LIBS}
 )
 
@@ -50,3 +83,4 @@ qt_generate_deploy_app_script(
     NO_UNSUPPORTED_PLATFORM_ERROR
 )
 install(SCRIPT ${deploy_script})
+install(FILES resources/icons/lucide/LICENSE DESTINATION licenses/lucide)

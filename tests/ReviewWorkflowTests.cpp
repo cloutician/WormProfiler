@@ -41,6 +41,7 @@
 #include <QTableWidget>
 #include <QTest>
 #include <QTimer>
+#include <QToolButton>
 #include <QWheelEvent>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
@@ -124,6 +125,7 @@ private slots:
     void sessionSaveAndCloseProtection();
     void desktopWorkspacesPreserveState();
     void modernControlsPreserveInputAndScale();
+    void searchIconsRemainCentered();
     void backgroundBatchUsesCapturedSettings();
     void approvedExportRunsInBackground();
     void cropCoordinatesRemainCorrectWhenZoomed();
@@ -535,6 +537,57 @@ void ReviewWorkflowTests::desktopWorkspacesPreserveState()
         QVERIFY(window.rect().contains(approve->mapTo(&window, approve->rect().bottomRight())));
     }
     QVERIFY(QApplication::activeModalWidget() == nullptr);
+}
+
+void ReviewWorkflowTests::searchIconsRemainCentered()
+{
+    QTemporaryDir directory;
+    const QString first = directory.filePath("sample-01.png"), second = directory.filePath("sample-02.png");
+    QVERIFY(writeImage(first)); QVERIFY(writeImage(second));
+    MainWindow window;
+    window.resize(1024, 768);
+    window.setImageFiles({first, second}, directory.path());
+    window.show();
+    auto *search = window.findChild<QLineEdit *>("imageSearch");
+    auto *action = window.findChild<QAction *>("imageSearchAction");
+    auto *list = window.findChild<QListWidget *>("preparationImageList");
+    QVERIFY(search && action && list);
+    QToolButton *icon = nullptr, *clear = nullptr;
+    for (auto *button : search->findChildren<QToolButton *>()) {
+        if (button->defaultAction() == action) icon = button;
+        else clear = button;
+    }
+    QVERIFY(icon && clear);
+    const auto verifyCentered = [search](QToolButton *button) {
+        const QRect geometry = button->geometry();
+        QVERIFY(search->rect().contains(geometry));
+        QVERIFY(qAbs(QRectF(geometry).center().y() - QRectF(search->rect()).center().y()) <= 0.5);
+    };
+    window.findChild<QSlider *>("blurSlider")->setFocus();
+    QTest::qWait(20);
+    verifyCentered(icon);
+    const QRect restingGeometry = icon->geometry();
+    const QString artifacts = qEnvironmentVariable("WORMPROFILER_TEST_ARTIFACT_DIR");
+    if (!artifacts.isEmpty()) QVERIFY(search->grab().save(QDir(artifacts).filePath("search-icon-unfocused.png")));
+    search->setFocus();
+    QTest::qWait(20);
+    verifyCentered(icon);
+    QCOMPARE(icon->geometry(), restingGeometry);
+    if (!artifacts.isEmpty()) QVERIFY(search->grab().save(QDir(artifacts).filePath("search-icon-focused.png")));
+    QTest::keyClicks(search, "sample-02");
+    QTRY_VERIFY(clear->isVisible());
+    verifyCentered(icon);
+    verifyCentered(clear);
+    QVERIFY(list->item(0)->isHidden());
+    QVERIFY(!list->item(1)->isHidden());
+    if (!artifacts.isEmpty()) QVERIFY(search->grab().save(QDir(artifacts).filePath("search-icon-text.png")));
+    QTest::mouseClick(clear, Qt::LeftButton);
+    QTRY_VERIFY(search->text().isEmpty());
+    QVERIFY(!list->item(0)->isHidden());
+    verifyCentered(icon);
+    window.resize(1400, 900);
+    QTest::qWait(20);
+    verifyCentered(icon);
 }
 
 void ReviewWorkflowTests::modernControlsPreserveInputAndScale()

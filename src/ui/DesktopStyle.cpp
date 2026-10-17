@@ -209,6 +209,7 @@ void configureDesktopApplication(QApplication &application)
         QToolButton:disabled { color: #939a9f; }
         QToolButton[popupMode="2"] { padding-right: 20px; }
         QToolButton::menu-indicator { image: url(:/icons/chevron-down.svg); width: 10px; height: 10px; subcontrol-position: right center; right: 5px; }
+        QLineEdit#imageSearch QToolButton { min-width: 0; min-height: 0; padding: 0; margin: 0; border: 0; background: transparent; }
         QTabWidget::pane { border: 0; border-top: 1px solid #e0e4e6; }
         QTabBar { background: #f4f5f6; }
         QTabBar::tab { background: transparent; color: #626b72; padding: 10px 20px; margin: 2px 2px 0 0; border: 0; border-bottom: 3px solid transparent; }

@@ -178,7 +178,8 @@ void MainWindow::buildPreparationWorkspace()
     m_imageSearch->setObjectName("imageSearch");
     m_imageSearch->setPlaceholderText("Filter images");
     m_imageSearch->setClearButtonEnabled(true);
-    m_imageSearch->addAction(DesktopIcons::icon(DesktopIcons::Symbol::Search), QLineEdit::LeadingPosition);
+    auto *searchAction = m_imageSearch->addAction(DesktopIcons::icon(DesktopIcons::Symbol::Search), QLineEdit::LeadingPosition);
+    searchAction->setObjectName("imageSearchAction");
     browserLayout->addWidget(m_imageSearch);
     m_imageList = new QListWidget(browser);
     m_imageList->setObjectName("preparationImageList");

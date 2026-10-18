@@ -84,7 +84,7 @@ QWidget *pathField(QLineEdit *edit, QWidget *parent, const std::function<void()>
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
-    setWindowIcon(style()->standardIcon(QStyle::SP_ComputerIcon));
+    setWindowIcon(DesktopIcons::icon(DesktopIcons::Symbol::Application));
     buildPreparationWorkspace();
     m_review = new CropReviewWorkspace({}, this);
     m_profiles = new WormProfileWorkspace(this);
@@ -150,6 +150,17 @@ MainWindow::~MainWindow()
     if (m_jobCancel) m_jobCancel->store(true);
     if (m_jobWatcher) m_jobWatcher->waitForFinished();
     delete ui;
+}
+
+void MainWindow::prepareForDisplay()
+{
+    if (isVisible()) return;
+    ensurePolished();
+    winId();
+    // Resolve initial layouts, font glyphs, and icon rasters before splash animation.
+    QPixmap firstFrame(size() * devicePixelRatioF());
+    firstFrame.setDevicePixelRatio(devicePixelRatioF());
+    render(&firstFrame);
 }
 
 void MainWindow::buildPreparationWorkspace()

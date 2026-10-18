@@ -4,6 +4,7 @@
 #include "mainwindow.h"
 #include "DesktopStyle.h"
 #include "DesktopIcons.h"
+#include "StartupSplash.h"
 #include "ImageViewer.h"
 #include "WormProfile.h"
 #include "WormProfileWorkspace.h"
@@ -12,6 +13,8 @@
 #include <QCalendarWidget>
 #include <QDateEdit>
 #include <QDoubleSpinBox>
+#include <QEvent>
+#include <QEventLoop>
 #include <QApplication>
 #include <QAction>
 #include <QDialogButtonBox>
@@ -22,18 +25,22 @@
 #include <QFileDialog>
 #include <QFontDatabase>
 #include <QGridLayout>
+#include <QImageReader>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
 #include <QListWidget>
 #include <QMessageBox>
+#include <QPainter>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QRadioButton>
 #include <QSpinBox>
 #include <QSlider>
 #include <QLineEdit>
 #include <QSettings>
+#include <QScreen>
 #include <QStyleOptionSlider>
 #include <QStyleOptionSpinBox>
 #include <QTabWidget>
@@ -42,7 +49,11 @@
 #include <QTest>
 #include <QTimer>
 #include <QToolButton>
+#include <QVariantAnimation>
 #include <QWheelEvent>
+#include <QWindow>
+#include <algorithm>
+#include <memory>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
@@ -105,6 +116,30 @@ QMap<int, TissueClass> tissueMapping()
 {
     return {{1, TissueClass::Donor}, {2, TissueClass::Host}, {3, TissueClass::Background}, {4, TissueClass::Eyes}};
 }
+
+class PaintProbe final : public QObject
+{
+public:
+    PaintProbe() { m_clock.start(); }
+    int count = 0;
+    QList<qint64> intervals;
+
+protected:
+    bool eventFilter(QObject *, QEvent *event) override
+    {
+        if (event->type() == QEvent::Paint) {
+            const qint64 now = m_clock.elapsed();
+            if (count > 0) intervals.append(now - m_lastPaint);
+            m_lastPaint = now;
+            ++count;
+        }
+        return false;
+    }
+
+private:
+    QElapsedTimer m_clock;
+    qint64 m_lastPaint = 0;
+};
 }
 
 class ReviewWorkflowTests : public QObject
@@ -113,6 +148,15 @@ class ReviewWorkflowTests : public QObject
 
 private slots:
     void initTestCase();
+    void applicationIconUsesPlanarianAtEverySize();
+    void desktopIconsReuseRasterizedPixmaps();
+    void startupSplashShowsBranding();
+    void startupSplashHandsOffWithoutBlocking();
+    void startupSplashWaitsForReadiness();
+    void startupLaunchPerformance();
+    void startupSplashRepaintsOnlyActivityStrip();
+    void startupSplashHandlesDestroyedWindow();
+    void startupSplashReleasesResourcesAfterHandoff();
     void profileRoundTripAndValidation();
     void profileMenuActionsRestoreControls();
     void sessionRoundTripAndValidation();
@@ -158,6 +202,290 @@ void ReviewWorkflowTests::initTestCase()
     configureDesktopApplication(*qApp);
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, m_settingsDirectory.path());
+}
+
+void ReviewWorkflowTests::applicationIconUsesPlanarianAtEverySize()
+{
+    const QImage source(":/icons/wormprofiler.png");
+    QVERIFY(!source.isNull());
+    QVERIFY(source.hasAlphaChannel());
+    QCOMPARE(source.width(), source.height());
+    QVERIFY(source.width() >= 512);
+
+    const auto icon = DesktopIcons::icon(DesktopIcons::Symbol::Application);
+    QVERIFY(!icon.isNull());
+    MainWindow window;
+    QDialog dialog(&window);
+    const QList<int> sizes = {16, 20, 24, 32, 40, 48, 64, 128, 256};
+    QImageReader windowsIcon(":/icons/wormprofiler.ico");
+    QCOMPARE(windowsIcon.imageCount(), sizes.size());
+
+    QImage preview(620, 360, QImage::Format_ARGB32_Premultiplied);
+    preview.fill(QColor("#ffffff"));
+    QPainter painter(&preview);
+    painter.fillRect(QRect(0, 180, 620, 180), QColor("#25292d"));
+    int x = 12;
+    int frameIndex = 0;
+    for (int size : sizes) {
+        const QSize dimensions(size, size);
+        const QImage rendered = icon.pixmap(dimensions, 1.0).toImage();
+        QCOMPARE(rendered.size(), dimensions);
+        QCOMPARE(qAlpha(rendered.pixel(0, 0)), 0);
+        QCOMPARE(qAlpha(rendered.pixel(size - 1, size - 1)), 0);
+        int opaquePixels = 0;
+        int tealPixels = 0;
+        for (int y = 0; y < size; ++y) {
+            for (int column = 0; column < size; ++column) {
+                const QColor pixel = rendered.pixelColor(column, y);
+                if (pixel.alpha() > 200) ++opaquePixels;
+                if (pixel.alpha() > 200 && pixel.green() > pixel.red() + 30
+                    && pixel.green() > pixel.blue()) ++tealPixels;
+            }
+        }
+        QVERIFY(opaquePixels > size * size / 5);
+        QVERIFY(opaquePixels < size * size * 4 / 5);
+        QVERIFY(tealPixels > size * size / 10);
+        QCOMPARE(qApp->windowIcon().pixmap(dimensions, 1.0).toImage(), rendered);
+        QCOMPARE(window.windowIcon().pixmap(dimensions, 1.0).toImage(), rendered);
+        QCOMPARE(dialog.windowIcon().pixmap(dimensions, 1.0).toImage(), rendered);
+
+        QVERIFY(windowsIcon.jumpToImage(frameIndex++));
+        const QImage frame = windowsIcon.read();
+        QVERIFY2(!frame.isNull(), qPrintable(windowsIcon.errorString()));
+        QCOMPARE(frame.size(), dimensions);
+        QVERIFY(frame.hasAlphaChannel());
+        QCOMPARE(qAlpha(frame.pixel(0, 0)), 0);
+        QCOMPARE(qAlpha(frame.pixel(size - 1, size - 1)), 0);
+
+        if (size <= 128) {
+            painter.drawImage(x, 20 + (128 - size) / 2, rendered);
+            painter.drawImage(x, 200 + (128 - size) / 2, rendered);
+            x += size + 14;
+        }
+    }
+    painter.end();
+    const QString artifacts = qEnvironmentVariable("WORMPROFILER_TEST_ARTIFACT_DIR");
+    if (!artifacts.isEmpty()) QVERIFY(preview.save(QDir(artifacts).filePath("planarian-icon-sizes.png")));
+}
+
+void ReviewWorkflowTests::desktopIconsReuseRasterizedPixmaps()
+{
+    for (int index = 0; index <= static_cast<int>(DesktopIcons::Symbol::Calendar); ++index) {
+        const auto symbol = static_cast<DesktopIcons::Symbol>(index);
+        if (symbol == DesktopIcons::Symbol::Application) continue;
+        for (qreal scale : {1.0, 1.5, 2.0}) {
+            for (bool onAccent : {false, true}) {
+                for (auto mode : {QIcon::Normal, QIcon::Disabled, QIcon::Selected, QIcon::Active}) {
+                    const auto first = DesktopIcons::icon(symbol, onAccent).pixmap(QSize(18, 18), scale, mode);
+                    const auto second = DesktopIcons::icon(symbol, onAccent).pixmap(QSize(18, 18), scale, mode);
+                    QVERIFY(!first.isNull());
+                    QCOMPARE(first.cacheKey(), second.cacheKey());
+                    QCOMPARE(first.size(), QSize(18, 18) * scale);
+                    QCOMPARE(first.devicePixelRatio(), scale);
+                }
+            }
+        }
+    }
+    for (qreal scale : {1.0, 1.5, 2.0}) {
+        const auto icon = DesktopIcons::icon(DesktopIcons::Symbol::Search);
+        QPixmap canvas(QSize(32, 32) * scale);
+        canvas.setDevicePixelRatio(scale);
+        canvas.fill(Qt::transparent);
+        QPainter painter(&canvas);
+        icon.paint(&painter, QRect(8, 8, 18, 18));
+        painter.end();
+        const auto painted = canvas.copy(QRect(QPoint(8 * scale, 8 * scale), QSize(18, 18) * scale));
+        QCOMPARE(painted.toImage(), icon.pixmap(QSize(18, 18), scale).toImage());
+    }
+}
+
+void ReviewWorkflowTests::startupSplashShowsBranding()
+{
+    StartupSplash splash;
+    splash.show();
+    QCoreApplication::processEvents();
+    QVERIFY(splash.isVisible());
+    QCOMPARE(splash.size(), QSize(560, 352).boundedTo(splash.screen()->availableGeometry().size() - QSize(32, 32)));
+    QCOMPARE(splash.windowTitle(), QString("WormProfiler"));
+    QVERIFY(splash.windowFlags() & Qt::FramelessWindowHint);
+    QVERIFY(splash.testAttribute(Qt::WA_OpaquePaintEvent));
+    QVERIFY(!splash.testAttribute(Qt::WA_TranslucentBackground));
+    QCOMPARE(splash.windowOpacity(), 1.0);
+    QVERIFY(splash.screen()->availableGeometry().contains(splash.frameGeometry()));
+    QVERIFY((splash.frameGeometry().center() - splash.screen()->availableGeometry().center()).manhattanLength() <= 2);
+
+    auto *logo = splash.findChild<QLabel *>("splashLogo");
+    auto *title = splash.findChild<QLabel *>("splashTitle");
+    auto *status = splash.findChild<QLabel *>("splashStatus");
+    auto *progress = splash.findChild<QWidget *>("splashProgress");
+    QVERIFY(logo && title && status && progress);
+    QVERIFY(!logo->pixmap().isNull());
+    QCOMPARE(title->text(), QString("WormProfiler"));
+    QVERIFY(title->fontMetrics().horizontalAdvance(title->text()) <= title->width());
+    QCOMPARE(status->text(), QString("Starting WormProfiler"));
+    QVERIFY(status->fontMetrics().horizontalAdvance(status->text()) <= status->width());
+    auto *motion = progress->findChild<QVariantAnimation *>("splashSweep");
+    QVERIFY(motion);
+    QCOMPARE(motion->loopCount(), -1);
+    QCOMPARE(motion->easingCurve().type(), QEasingCurve::Linear);
+    QVERIFY(progress->testAttribute(Qt::WA_OpaquePaintEvent));
+    QVERIFY(logo->geometry().bottom() < title->geometry().top());
+    QVERIFY(title->geometry().bottom() < status->geometry().top());
+    QVERIFY(status->geometry().bottom() < progress->geometry().top());
+    for (QWidget *child : QList<QWidget *>{logo, title, status, progress})
+        QVERIFY(splash.rect().contains(child->geometry()));
+    const QImage firstFrame = progress->grab().toImage();
+    QTest::qWait(120);
+    const QImage nextFrame = progress->grab().toImage();
+    if (progress->style()->styleHint(QStyle::SH_Widget_Animate)) QVERIFY(firstFrame != nextFrame);
+
+    QTest::mouseClick(&splash, Qt::LeftButton);
+    QTest::keyClick(&splash, Qt::Key_Escape);
+    QVERIFY(splash.isVisible());
+    const QString artifacts = qEnvironmentVariable("WORMPROFILER_TEST_ARTIFACT_DIR");
+    if (!artifacts.isEmpty()) QVERIFY(splash.grab().save(QDir(artifacts).filePath("startup-splash.png")));
+    splash.close();
+    QCOMPARE(motion->state(), QAbstractAnimation::Stopped);
+    const int stoppedAt = motion->currentTime();
+    QTest::qWait(60);
+    QCOMPARE(motion->currentTime(), stoppedAt);
+}
+
+void ReviewWorkflowTests::startupSplashHandsOffWithoutBlocking()
+{
+    StartupSplash splash;
+    QWidget window;
+    PaintProbe mainPaints;
+    window.installEventFilter(&mainPaints);
+    QElapsedTimer elapsed;
+    elapsed.start();
+    splash.show();
+    splash.finishWhenReady(window);
+    QVERIFY(splash.isVisible());
+    QVERIFY(!window.isVisible());
+
+    bool eventLoopResponsive = false;
+    QTimer::singleShot(30, &splash, [&eventLoopResponsive] { eventLoopResponsive = true; });
+    QTRY_VERIFY_WITH_TIMEOUT(eventLoopResponsive, 500);
+    QVERIFY(splash.isVisible());
+    QVERIFY(!window.isVisible());
+    QTRY_VERIFY_WITH_TIMEOUT(window.isVisible() && !splash.isVisible(), StartupSplash::MinimumDisplayMs + 2000);
+    QVERIFY(mainPaints.count > 0);
+    QVERIFY(elapsed.elapsed() >= StartupSplash::MinimumDisplayMs);
+    window.close();
+}
+
+void ReviewWorkflowTests::startupSplashWaitsForReadiness()
+{
+    StartupSplash splash;
+    QWidget window;
+    splash.show();
+    QTest::qWait(StartupSplash::MinimumDisplayMs + 50);
+    QVERIFY(splash.isVisible());
+    QVERIFY(!window.isVisible());
+    splash.finishWhenReady(window);
+    QTRY_VERIFY_WITH_TIMEOUT(window.isVisible() && !splash.isVisible(), 1500);
+    window.close();
+}
+
+void ReviewWorkflowTests::startupLaunchPerformance()
+{
+    QElapsedTimer clock;
+    clock.start();
+    MainWindow window;
+    const qint64 builtAt = clock.elapsed();
+    window.prepareForDisplay();
+    const qint64 warmedAt = clock.elapsed();
+    QVERIFY(!window.isVisible());
+    StartupSplash splash(window.screen());
+    const qint64 preparedAt = clock.elapsed();
+    PaintProbe rootPaints;
+    PaintProbe activityPaints;
+    splash.installEventFilter(&rootPaints);
+    splash.findChild<QWidget *>("splashProgress")->installEventFilter(&activityPaints);
+    QList<qint64> heartbeatGaps;
+    qint64 lastHeartbeat = clock.elapsed();
+    QEventLoop startupLoop;
+    QTimer deadline;
+    deadline.setSingleShot(true);
+    connect(&deadline, &QTimer::timeout, &startupLoop, &QEventLoop::quit);
+    QTimer heartbeat;
+    heartbeat.setTimerType(Qt::PreciseTimer);
+    heartbeat.setInterval(8);
+    connect(&heartbeat, &QTimer::timeout, this, [&] {
+        const qint64 now = clock.elapsed();
+        heartbeatGaps.append(now - lastHeartbeat);
+        lastHeartbeat = now;
+        if (window.isVisible() && !splash.isVisible()) startupLoop.quit();
+    });
+    heartbeat.start();
+    splash.show();
+    const qint64 shownAt = clock.elapsed();
+    splash.finishWhenReady(window);
+    QCOMPARE(splash.windowHandle()->transientParent(), window.windowHandle());
+    deadline.start(5000);
+    startupLoop.exec();
+    QVERIFY(window.isVisible() && !splash.isVisible());
+    heartbeat.stop();
+    QVERIFY(!heartbeatGaps.isEmpty());
+    std::sort(heartbeatGaps.begin(), heartbeatGaps.end());
+    QJsonObject timing{{"splash_prepare_ms", preparedAt - warmedAt}, {"splash_show_ms", shownAt - preparedAt},
+                       {"mainwindow_build_ms", builtAt}, {"mainwindow_warm_ms", warmedAt - builtAt},
+                       {"handoff_ms", clock.elapsed()}, {"visible_handoff_ms", clock.elapsed() - shownAt},
+                       {"splash_paints", rootPaints.count}, {"activity_paints", activityPaints.count},
+                       {"heartbeat_max_ms", heartbeatGaps.last()},
+                       {"heartbeat_p95_ms", heartbeatGaps.at((heartbeatGaps.size() - 1) * 95 / 100)}};
+    if (!activityPaints.intervals.isEmpty()) {
+        std::sort(activityPaints.intervals.begin(), activityPaints.intervals.end());
+        timing.insert("activity_frame_max_ms", activityPaints.intervals.last());
+        timing.insert("activity_frame_p95_ms", activityPaints.intervals.at((activityPaints.intervals.size() - 1) * 95 / 100));
+    }
+    qInfo().noquote() << QJsonDocument(timing).toJson(QJsonDocument::Compact);
+    const QString artifacts = qEnvironmentVariable("WORMPROFILER_TEST_ARTIFACT_DIR");
+    if (!artifacts.isEmpty()) QVERIFY(writeJson(QDir(artifacts).filePath("startup-timing.json"), timing));
+    window.close();
+}
+
+void ReviewWorkflowTests::startupSplashRepaintsOnlyActivityStrip()
+{
+    StartupSplash splash;
+    splash.show();
+    QTest::qWait(30);
+    auto *progress = splash.findChild<QWidget *>("splashProgress");
+    QVERIFY(progress);
+    PaintProbe rootPaints;
+    PaintProbe activityPaints;
+    splash.installEventFilter(&rootPaints);
+    progress->installEventFilter(&activityPaints);
+    QTest::qWait(220);
+    if (progress->style()->styleHint(QStyle::SH_Widget_Animate)) {
+        QVERIFY(activityPaints.count >= 3);
+        QCOMPARE(rootPaints.count, 0);
+    }
+    splash.close();
+}
+
+void ReviewWorkflowTests::startupSplashHandlesDestroyedWindow()
+{
+    StartupSplash splash;
+    auto window = std::make_unique<QWidget>();
+    splash.show();
+    splash.finishWhenReady(*window);
+    window.reset();
+    QVERIFY(!splash.isVisible());
+}
+
+void ReviewWorkflowTests::startupSplashReleasesResourcesAfterHandoff()
+{
+    auto *splash = new StartupSplash;
+    splash->setAttribute(Qt::WA_DeleteOnClose);
+    QPointer<StartupSplash> lifetime(splash);
+    QWidget window;
+    splash->show();
+    splash->finishWhenReady(window);
+    QTRY_VERIFY_WITH_TIMEOUT(lifetime.isNull(), StartupSplash::MinimumDisplayMs + 2000);
+    QVERIFY(window.isVisible());
+    window.close();
 }
 
 void ReviewWorkflowTests::profileMenuActionsRestoreControls()

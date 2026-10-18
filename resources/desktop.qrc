@@ -1,5 +1,7 @@
 <RCC>
     <qresource prefix="/icons">
+        <file alias="wormprofiler.png">branding/wormprofiler.png</file>
+        <file alias="wormprofiler.ico">branding/wormprofiler.ico</file>
         <file alias="ruler.svg">icons/lucide/ruler.svg</file>
         <file alias="calendar-days.svg">icons/lucide/calendar-days.svg</file>
         <file alias="chevron-up-disabled.svg">icons/chevron-up-disabled.svg</file>

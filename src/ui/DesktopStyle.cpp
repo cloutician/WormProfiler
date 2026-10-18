@@ -168,6 +168,7 @@ void configureDesktopApplication(QApplication &application)
 {
     application.setOrganizationName("WormProfiler");
     application.setApplicationName("WormProfiler");
+    application.setWindowIcon(DesktopIcons::icon(DesktopIcons::Symbol::Application));
     application.setStyle(new DesktopControlStyle);
 #ifdef Q_OS_WIN
     QFont font;

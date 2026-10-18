@@ -26,6 +26,8 @@ set(APP_SOURCES
     src/ui/DesktopStyle.h
     src/ui/DesktopIcons.cpp
     src/ui/DesktopIcons.h
+    src/ui/StartupSplash.cpp
+    src/ui/StartupSplash.h
     src/ui/WormProfileWorkspace.cpp
     src/ui/WormProfileWorkspace.h
     resources/desktop.qrc
@@ -43,12 +45,21 @@ set(APP_SOURCES
 
 qt_add_executable(WormProfiler WIN32 MACOSX_BUNDLE main.cpp ${REVIEW_SOURCES} ${APP_SOURCES})
 
+if(WIN32)
+    enable_language(RC)
+    configure_file(resources/windows/app.rc.in "${CMAKE_CURRENT_BINARY_DIR}/wormprofiler.rc" @ONLY)
+    target_sources(WormProfiler PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/wormprofiler.rc")
+    set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/wormprofiler.rc" PROPERTIES
+        OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/resources/branding/wormprofiler.ico")
+endif()
+
 include(CTest)
 if(BUILD_TESTING)
     find_package(Qt6 6.5 REQUIRED COMPONENTS Test)
     qt_add_executable(WormProfilerTests tests/ReviewWorkflowTests.cpp ${REVIEW_SOURCES} ${APP_SOURCES})
     target_include_directories(WormProfilerTests PRIVATE src src/io src/ui src/preprocessing ${OpenCV_INCLUDE_DIRS})
-    target_link_libraries(WormProfilerTests PRIVATE Qt::Widgets Qt::Test Qt::Concurrent Qt::Svg ${OpenCV_LIBS})
+    target_link_libraries(WormProfilerTests PRIVATE Qt::Widgets Qt::Test Qt::Concurrent Qt::Svg ${OpenCV_LIBS}
+        $<$<PLATFORM_ID:Windows>:dwmapi>)
     add_test(NAME ReviewWorkflow COMMAND WormProfilerTests -o -,txt)
     set_tests_properties(ReviewWorkflow PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 45)
 endif()
@@ -60,6 +71,7 @@ target_link_libraries(WormProfiler
         Qt::Concurrent
         Qt::Svg
         ${OpenCV_LIBS}
+        $<$<PLATFORM_ID:Windows>:dwmapi>
 )
 
 target_include_directories(WormProfiler

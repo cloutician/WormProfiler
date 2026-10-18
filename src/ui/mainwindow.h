@@ -38,6 +38,7 @@ class MainWindow : public QMainWindow
 public:
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow() override;
+    void prepareForDisplay();
     bool loadImagePath(const QString &path);
     void setImageFiles(const QStringList &paths, const QString &folder = QString());
     void showReviewSession(const CropReviewSession &session, const QString &path = QString());

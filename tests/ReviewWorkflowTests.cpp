@@ -36,6 +36,7 @@
 #include <QListWidget>
 #include <QMessageBox>
 #include <QMimeData>
+#include <QMouseEvent>
 #include <QNativeGestureEvent>
 #include <QPainter>
 #include <QProgressBar>
@@ -48,6 +49,7 @@
 #include <QSettings>
 #include <QSignalSpy>
 #include <QScreen>
+#include <QScrollBar>
 #include <QStyleOptionSlider>
 #include <QStyleOptionSpinBox>
 #include <QTabWidget>
@@ -56,6 +58,7 @@
 #include <QTest>
 #include <QTimer>
 #include <QToolButton>
+#include <QToolBar>
 #include <QVariantAnimation>
 #include <QWheelEvent>
 #include <QWindow>
@@ -89,6 +92,15 @@ bool writeImage(const QString &path, bool sixteenBit = false)
     cv::ellipse(image, cv::Point(100, 70), cv::Size(65, 24), 12, 0, 360,
                 sixteenBit ? cv::Scalar(48000) : cv::Scalar(85, 105, 75), -1);
     return cv::imwrite(path.toStdString(), image);
+}
+
+bool navigationMatches(const ImageViewer &first, const ImageViewer &second)
+{
+    const auto a = first.viewState(), b = second.viewState();
+    const QSizeF from = first.sceneRect().size(), to = second.sceneRect().size();
+    const QPointF mapped(b.center.x() / to.width() * from.width(), b.center.y() / to.height() * from.height());
+    return a.fitted == b.fitted && std::abs(a.zoom * from.width() - b.zoom * to.width()) < 0.01
+        && QLineF(a.center, mapped).length() * a.zoom < 3.0;
 }
 
 QByteArray readFile(const QString &path)
@@ -186,6 +198,9 @@ private slots:
     void cropCoordinatesRemainCorrectWhenZoomed();
     void browserHandlesFolderChangesAndUnreadableImages();
     void imageNavigationSupportsTouchAndTrackpad();
+    void linkedImageNavigationTracksBothViewers();
+    void linkedImageNavigationSupportsTouchAndTrackpad();
+    void linkedImageNavigationSurvivesPreviewChangesAndHistory();
     void cropTouchNavigationPreservesBounds();
     void imageDropsAppendAndDeduplicate();
     void imageRemovalPreservesSourceFiles();
@@ -291,7 +306,7 @@ void ReviewWorkflowTests::applicationIconUsesPlanarianAtEverySize()
 
 void ReviewWorkflowTests::desktopIconsReuseRasterizedPixmaps()
 {
-    for (int index = 0; index <= static_cast<int>(DesktopIcons::Symbol::Calendar); ++index) {
+    for (int index = 0; index <= static_cast<int>(DesktopIcons::Symbol::Link); ++index) {
         const auto symbol = static_cast<DesktopIcons::Symbol>(index);
         if (symbol == DesktopIcons::Symbol::Application) continue;
         for (qreal scale : {1.0, 1.5, 2.0}) {
@@ -1266,6 +1281,203 @@ void ReviewWorkflowTests::imageNavigationSupportsTouchAndTrackpad()
         Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
     QApplication::sendEvent(surface, &emptyScroll);
     QVERIFY(!view.hasImage());
+}
+
+void ReviewWorkflowTests::linkedImageNavigationTracksBothViewers()
+{
+    QTemporaryDir directory;
+    const QString path = directory.filePath("sample.png");
+    QVERIFY(writeImage(path));
+    QVERIFY(QImage(path).scaled(2400, 1680).save(path));
+    MainWindow window;
+    window.resize(1400, 900);
+    auto *linked = window.findChild<QAction *>("actionLinkImageNavigation");
+    QVERIFY(linked && linked->isCheckable());
+    linked->setChecked(false);
+    QVERIFY(!linked->isEnabled());
+    window.setImageFiles({path});
+    window.findChild<QCheckBox *>("resizeCheckBox")->setChecked(false);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    auto *original = window.findChild<ImageViewer *>("originalImageView");
+    auto *processed = window.findChild<ImageViewer *>("processedImageView");
+    QVERIFY(linked->isEnabled());
+    original->restoreViewState({false, 1.25, QPointF(1250, 850)});
+    QVERIFY(processed->viewState().fitted);
+    linked->trigger();
+    QVERIFY(linked->isChecked());
+    QVERIFY(navigationMatches(*original, *processed));
+    QSignalSpy originalChanges(original, &ImageViewer::navigationChanged);
+    QSignalSpy processedChanges(processed, &ImageViewer::navigationChanged);
+    const QPoint anchor = processed->viewport()->rect().center() + QPoint(35, 20);
+    QWheelEvent zoom(anchor, processed->viewport()->mapToGlobal(anchor), QPoint(), QPoint(0, 120),
+        Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+    QApplication::sendEvent(processed->viewport(), &zoom);
+    QVERIFY(std::abs(original->zoomFactor() - 1.25 * 1.15) < 0.0001);
+    QVERIFY(navigationMatches(*original, *processed));
+    const auto beforeScroll = original->viewState();
+    original->horizontalScrollBar()->setValue(original->horizontalScrollBar()->value() + 45);
+    original->verticalScrollBar()->setValue(original->verticalScrollBar()->value() + 30);
+    QVERIFY(QLineF(beforeScroll.center, original->viewState().center).length() > 20.0);
+    QVERIFY(navigationMatches(*original, *processed));
+    const QPoint center = processed->viewport()->rect().center();
+    const auto beforeDrag = processed->viewState();
+    QTest::mousePress(processed->viewport(), Qt::LeftButton, Qt::NoModifier, center);
+    const QPoint dragPosition = center + QPoint(50, 25);
+    QMouseEvent drag(QEvent::MouseMove, dragPosition, processed->viewport()->mapToGlobal(dragPosition),
+        Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(processed->viewport(), &drag);
+    QTest::mouseRelease(processed->viewport(), Qt::LeftButton, Qt::NoModifier, center + QPoint(50, 25));
+    QVERIFY(QLineF(beforeDrag.center, processed->viewState().center).length() > 20.0);
+    QVERIFY(navigationMatches(*original, *processed));
+    QVERIFY(originalChanges.count() < 20 && processedChanges.count() < 20);
+
+    auto *tabs = window.findChild<QTabWidget *>("workspaces");
+    tabs->setCurrentIndex(1);
+    QVERIFY(!linked->isEnabled());
+    QVERIFY(linked->isChecked());
+    tabs->setCurrentIndex(0);
+    QVERIFY(linked->isEnabled());
+    auto *toolbar = window.findChild<QToolBar *>("preparationToolbar");
+    auto *button = qobject_cast<QToolButton *>(toolbar->widgetForAction(linked));
+    QVERIFY(button && button->isChecked() && !button->icon().isNull());
+    QVERIFY(!button->toolTip().isEmpty());
+    const QString artifacts = qEnvironmentVariable("WORMPROFILER_TEST_ARTIFACT_DIR");
+    if (!artifacts.isEmpty()) {
+        QTest::qWait(30);
+        QVERIFY(window.grab().save(QDir(artifacts).filePath("linked-navigation-1400.png")));
+        window.resize(1024, 768);
+        QTest::qWait(30);
+        QVERIFY(window.grab().save(QDir(artifacts).filePath("linked-navigation-1024.png")));
+        QVERIFY(button->isVisible());
+        QVERIFY(toolbar->rect().contains(button->geometry()));
+        window.resize(1400, 900);
+    }
+    linked->trigger();
+    QVERIFY(!linked->isChecked());
+    const auto independent = processed->viewState();
+    const QPoint originalCenter = original->viewport()->rect().center();
+    QWheelEvent independentZoom(originalCenter, original->viewport()->mapToGlobal(originalCenter), QPoint(), QPoint(0, 120),
+        Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+    QApplication::sendEvent(original->viewport(), &independentZoom);
+    original->horizontalScrollBar()->setValue(original->horizontalScrollBar()->value() + 30);
+    QCOMPARE(processed->viewState().zoom, independent.zoom);
+    QCOMPARE(processed->viewState().center, independent.center);
+}
+
+void ReviewWorkflowTests::linkedImageNavigationSupportsTouchAndTrackpad()
+{
+    QTemporaryDir directory;
+    const QString path = directory.filePath("sample.png");
+    QVERIFY(writeImage(path));
+    QVERIFY(QImage(path).scaled(2400, 1680).save(path));
+    MainWindow window;
+    window.resize(1400, 900);
+    window.setImageFiles({path});
+    window.findChild<QCheckBox *>("resizeCheckBox")->setChecked(false);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    auto *original = window.findChild<ImageViewer *>("originalImageView");
+    auto *processed = window.findChild<ImageViewer *>("processedImageView");
+    auto *linked = window.findChild<QAction *>("actionLinkImageNavigation");
+    linked->setChecked(false);
+    original->restoreViewState({false, 1.0, QPointF(1200, 840)});
+    linked->setChecked(true);
+    QCoreApplication::processEvents();
+    auto *device = QTest::createTouchDevice();
+    QWidget *surface = original->viewport();
+    // Keep injected touch points on the offscreen platform's virtual display at high DPI.
+    const QRect screenArea(surface->mapFromGlobal(surface->screen()->geometry().topLeft()), surface->screen()->geometry().size());
+    const QPoint center = surface->rect().intersected(screenArea).center();
+    auto touch = QTest::touchEvent(surface, device, false);
+    touch.press(0, center - QPoint(50, 0)).press(1, center + QPoint(50, 0)).commit();
+    touch.move(0, center - QPoint(75, 0)).move(1, center + QPoint(75, 0)).commit();
+    QVERIFY2(std::abs(processed->zoomFactor() - 1.5) < 0.01,
+        qPrintable(QString("Original %1, processed %2").arg(original->zoomFactor()).arg(processed->zoomFactor())));
+    QVERIFY(navigationMatches(*original, *processed));
+    touch.stationary(0).release(1, center + QPoint(75, 0)).commit();
+    const auto beforePan = original->viewState();
+    touch.move(0, center - QPoint(35, -30)).commit();
+    QVERIFY(QLineF(beforePan.center, original->viewState().center).length() > 20.0);
+    QVERIFY(navigationMatches(*original, *processed));
+    touch.release(0, center - QPoint(35, -30)).commit();
+    surface = processed->viewport();
+    const QPoint otherCenter = surface->rect().center();
+    const auto beforeScroll = original->viewState();
+    QWheelEvent scroll(otherCenter, surface->mapToGlobal(otherCenter), QPoint(24, 18), QPoint(),
+        Qt::NoButton, Qt::NoModifier, Qt::ScrollUpdate, false);
+    QApplication::sendEvent(surface, &scroll);
+    QCOMPARE(original->zoomFactor(), beforeScroll.zoom);
+    QVERIFY(QLineF(beforeScroll.center, original->viewState().center).length() > 10.0);
+    QVERIFY(navigationMatches(*original, *processed));
+    QNativeGestureEvent pinch(Qt::ZoomNativeGesture, device, 2, otherCenter, otherCenter,
+        surface->mapToGlobal(otherCenter), 0.25, QPointF());
+    QApplication::sendEvent(surface, &pinch);
+    QVERIFY(std::abs(original->zoomFactor() - beforeScroll.zoom * 1.25) < 0.01);
+    QVERIFY(navigationMatches(*original, *processed));
+    linked->setChecked(false);
+}
+
+void ReviewWorkflowTests::linkedImageNavigationSurvivesPreviewChangesAndHistory()
+{
+    QTemporaryDir directory;
+    const QString path = directory.filePath("sample.png"), mask = directory.filePath("mask.png");
+    QVERIFY(writeImage(path));
+    QVERIFY(QImage(path).scaled(2400, 1680).save(path));
+    QImage labels(2400, 1680, QImage::Format_Grayscale8);
+    labels.fill(255);
+    QVERIFY(labels.save(mask));
+    const auto sourceBytes = readFile(path);
+    MainWindow window;
+    window.resize(1400, 900);
+    window.setImageFiles({path});
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    auto *original = window.findChild<ImageViewer *>("originalImageView");
+    auto *processed = window.findChild<ImageViewer *>("processedImageView");
+    auto *linked = window.findChild<QAction *>("actionLinkImageNavigation");
+    linked->setChecked(true);
+    original->restoreViewState({false, 1.25, QPointF(1250, 850)});
+    window.findChild<QCheckBox *>("resizeCheckBox")->setChecked(true);
+    window.findChild<QSlider *>("resizeSlider")->setValue(50);
+    QVERIFY(std::abs(processed->zoomFactor() - original->zoomFactor() * 2.0) < 0.0001);
+    QVERIFY(navigationMatches(*original, *processed));
+    window.findChild<QSlider *>("blurSlider")->setValue(3);
+    QVERIFY(navigationMatches(*original, *processed));
+    window.findChild<QAction *>("actionActualSize")->trigger();
+    QCOMPARE(original->zoomFactor(), 1.0);
+    QCOMPARE(processed->zoomFactor(), 2.0);
+    QVERIFY(navigationMatches(*original, *processed));
+    QTimer::singleShot(0, [mask] {
+        if (auto *dialog = qobject_cast<QFileDialog *>(QApplication::activeModalWidget())) {
+            dialog->selectFile(mask);
+            QMetaObject::invokeMethod(dialog, "accept");
+        }
+    });
+    QVERIFY(QMetaObject::invokeMethod(&window, "loadMask"));
+    QCOMPARE(processed->zoomFactor(), original->zoomFactor());
+    QVERIFY(navigationMatches(*original, *processed));
+    window.findChild<QCheckBox *>("showMaskCheckBox")->setChecked(false);
+    QCOMPARE(processed->zoomFactor(), original->zoomFactor() * 2.0);
+    QVERIFY(navigationMatches(*original, *processed));
+    const auto before = original->viewState();
+    window.findChild<QAction *>("actionClearImages")->trigger();
+    QVERIFY(!linked->isEnabled() && linked->isChecked());
+    window.findChild<QAction *>("actionUndoImages")->trigger();
+    QVERIFY(linked->isEnabled() && linked->isChecked());
+    QCOMPARE(original->viewState().zoom, before.zoom);
+    QVERIFY(QLineF(original->viewState().center, before.center).length() < 2.0);
+    QVERIFY(navigationMatches(*original, *processed));
+    window.findChild<QAction *>("actionFitImages")->trigger();
+    QVERIFY(original->viewState().fitted && processed->viewState().fitted);
+    window.resize(1100, 760);
+    QCoreApplication::processEvents();
+    QVERIFY(original->viewState().fitted && processed->viewState().fitted);
+    QVERIFY(QSettings().value("navigation/linkPreparationViews").toBool());
+    MainWindow nextWindow;
+    QVERIFY(nextWindow.findChild<QAction *>("actionLinkImageNavigation")->isChecked());
+    linked->setChecked(false);
+    QCOMPARE(readFile(path), sourceBytes);
 }
 
 void ReviewWorkflowTests::cropTouchNavigationPreservesBounds()

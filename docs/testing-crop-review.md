@@ -11,6 +11,14 @@
 
 Switch between Image preparation and Crop review during the checks below. Image settings and review decisions should remain available in their own workspace.
 
+### Linked navigation
+
+1. Load an image and enable the chain-link button beside Fit and Actual size, or **View > Link image navigation**. Zoom, drag, use the scrollbars, and try touch/trackpad gestures in either pane. Both previews should follow the same relative position and magnification without jumping back and forth.
+2. Turn linking off. Navigating either image must leave the other unchanged. Turn it on again: both views should align to the last navigated pane. The preference should survive restarting the application.
+3. Enable Resize image and change the percentage while zoomed in. The processed preview should remain aligned at the corresponding image scale. Repeat with intensity adjustments and toggling a loaded mask overlay.
+4. Fit should fit both images. Actual size uses the original image's pixel scale while linked, adjusting the resized preview to match. Resize the window and pane dividers, then clear and undo the workspace: linking should remain available and the restored views should align.
+5. Linking should be disabled when either preview is empty and in the other workspaces. It must not change image pixels, crop bounds, or measurements.
+
 ## Touch and image management
 
 1. In Image preparation, drop one or more PNG, JPEG, BMP, or TIFF files from File Explorer onto either image pane or the image browser. Existing images should remain, and the first readable new image should be selected.
@@ -83,6 +91,8 @@ The CMake test target `WormProfilerTests` covers JSON validation and round trips
 Input-management checks cover touchscreen pan and pinch, finger transitions, touch cancellation, native zoom and pixel scrolling, unchanged crop geometry, file/folder drops, duplicate imports, multi-selection removal, source-file preservation, and text-editing shortcuts. Image removal is strictly workspace-only; original files must not be moved or deleted.
 
 History checks cover multi-image removal, clearing and mask restoration, import grouping, redo-branch invalidation, failed and duplicate imports, viewer state, text-editing shortcut isolation, busy/workspace action states, and unavailable source files.
+
+Linked-navigation checks cover both directions, independent mode, wheel zoom, mouse dragging, scrollbars, touch pinch/pan, native gestures, resized previews, mask overlays, fit/actual-size commands, workspace undo, preference persistence, and feedback-loop prevention.
 
 The desktop-control checks also cover slider keyboard input, track clicks and dragging, independent checkboxes, exclusive radio buttons, spinbox steppers, dropdown keyboard input, and nonempty vector icons at 100%, 150%, and 200% scale. Setting `WORMPROFILER_TEST_ARTIFACT_DIR` captures both workspaces at several window sizes and a control-state preview.
 

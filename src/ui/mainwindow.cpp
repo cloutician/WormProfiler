@@ -434,6 +434,9 @@ void MainWindow::buildPreparationWorkspace()
     connect(m_originalView, &ImageViewer::zoomChanged, this, [this](double factor) {
         if (m_zoomLabel) m_zoomLabel->setText(QString("Original %1 %").arg(qRound(factor * 100)));
     });
+    for (auto *view : {m_originalView, m_processedView}) {
+        connect(view, &ImageViewer::navigationChanged, this, [this, view] { syncImageNavigation(view); });
+    }
 }
 
 void MainWindow::buildMenus()
@@ -552,12 +555,26 @@ void MainWindow::buildMenus()
         else { m_originalView->fitImage(); m_processedView->fitImage(); }
     });
     m_fitAction->setShortcut(QKeySequence("Ctrl+0"));
+    m_fitAction->setObjectName("actionFitImages");
     m_actualSizeAction = view->addAction(style()->standardIcon(QStyle::SP_FileDialogDetailedView), "Actual size", this, [this] {
         if (ui->workspaces->currentIndex() == 2) m_profiles->findChild<ImageViewer *>()->actualSize();
         else if (ui->workspaces->currentIndex() == 1) m_review->findChild<CropImageView *>()->actualSize();
-        else { m_originalView->actualSize(); m_processedView->actualSize(); }
+        else {
+            m_originalView->actualSize();
+            if (!m_linkNavigationAction->isChecked()) m_processedView->actualSize();
+        }
     });
     m_actualSizeAction->setShortcut(QKeySequence("Ctrl+1"));
+    m_actualSizeAction->setObjectName("actionActualSize");
+    m_linkNavigationAction = view->addAction(DesktopIcons::icon(DesktopIcons::Symbol::Link), "Link image navigation");
+    m_linkNavigationAction->setObjectName("actionLinkImageNavigation");
+    m_linkNavigationAction->setCheckable(true);
+    m_linkNavigationAction->setChecked(QSettings().value("navigation/linkPreparationViews", false).toBool());
+    m_linkNavigationAction->setToolTip("Link zoom and pan between Original and Processed");
+    connect(m_linkNavigationAction, &QAction::toggled, this, [this](bool linked) {
+        QSettings().setValue("navigation/linkPreparationViews", linked);
+        if (linked) syncImageNavigation(m_lastNavigationView ? m_lastNavigationView : m_originalView);
+    });
     auto *help = ui->menubar->addMenu("&Help");
     help->addAction("About WormProfiler", this, [this] {
         QMessageBox::about(this, "WormProfiler", "WormProfiler\nMicroscopy image preparation, crop review, and tissue morphometrics\nQt 6 and OpenCV");
@@ -574,6 +591,7 @@ void MainWindow::buildMenus()
     m_preparationToolbar->addSeparator();
     m_preparationToolbar->addAction(m_fitAction);
     m_preparationToolbar->addAction(m_actualSizeAction);
+    m_preparationToolbar->addAction(m_linkNavigationAction);
     m_preparationToolbar->addSeparator();
     m_preparationToolbar->addAction(m_undoImagesAction);
     m_preparationToolbar->addAction(m_redoImagesAction);
@@ -604,7 +622,7 @@ void MainWindow::buildMenus()
     }
     open->setToolTip("Open image (Ctrl+O)");
     m_fitAction->setToolTip("Fit both images to their views (Ctrl+0)");
-    m_actualSizeAction->setToolTip("One image pixel per display pixel (Ctrl+1)");
+    m_actualSizeAction->setToolTip("Actual size (Ctrl+1); linked views use the original image scale");
 }
 
 void MainWindow::buildStatusBar()
@@ -664,6 +682,7 @@ void MainWindow::updateActions()
     m_fitAction->setEnabled(preparation ? hasImage : ui->workspaces->currentIndex() == 1 ? m_review->hasSession() && !m_busy
         : m_profiles->findChild<ImageViewer *>()->hasImage() && !m_busy);
     m_actualSizeAction->setEnabled(m_fitAction->isEnabled());
+    m_linkNavigationAction->setEnabled(preparation && m_originalView->hasImage() && m_processedView->hasImage());
     const int row = m_imageList->currentRow();
     bool previous = false, next = false;
     for (int index = 0; index < m_imageList->count(); ++index) {
@@ -965,8 +984,12 @@ void MainWindow::restoreImageWorkspace(const ImageWorkspaceState &state)
     const bool missingMask = !missingCurrent && !state.maskPath.isEmpty() && !loadMaskPath(state.maskPath);
     m_showMask->setChecked(state.showMask && !m_currentMask.empty());
     refreshImagePreviews();
-    m_originalView->restoreViewState(state.originalView);
-    m_processedView->restoreViewState(state.processedView);
+    {
+        const QScopedValueRollback syncing(m_syncingImageNavigation, true);
+        m_originalView->restoreViewState(state.originalView);
+        m_processedView->restoreViewState(state.processedView);
+    }
+    syncImageNavigation(m_originalView);
     m_statusLabel->setText(missingCurrent ? "Workspace restored, but the previous source image is unavailable."
         : missingMask ? "Workspace restored, but the previous mask could not be loaded."
         : QString("Restored %1 workspace image(s). Source files were not changed.").arg(m_imagePaths.size()));
@@ -1082,16 +1105,30 @@ void MainWindow::updateProcessedImage()
 void MainWindow::refreshImagePreviews()
 {
     ImageLoader loader;
-    m_originalView->setImage(loader.matToQImage(m_currentOriginalImage));
     const bool overlay = m_showMask->isChecked() && !m_currentOverlayImage.empty();
     const cv::Mat &display = overlay ? m_currentOverlayImage : m_currentProcessedImage;
-    m_processedView->setImage(loader.matToQImage(display));
+    {
+        const QScopedValueRollback syncing(m_syncingImageNavigation, true);
+        m_originalView->setImage(loader.matToQImage(m_currentOriginalImage));
+        m_processedView->setImage(loader.matToQImage(display));
+    }
+    syncImageNavigation(m_originalView);
     m_processedHeading->setText(overlay ? "Mask overlay" : "Processed");
     m_originalInfo->setText(imageDescription(m_currentOriginalImage));
     m_originalInfo->setToolTip(m_originalInfo->text());
     m_processedInfo->setText(imageDescription(display));
     m_processedInfo->setToolTip(m_processedInfo->text());
     updateActions();
+}
+
+void MainWindow::syncImageNavigation(ImageViewer *source)
+{
+    if (m_syncingImageNavigation || !source->hasImage()) return;
+    m_lastNavigationView = source;
+    if (!m_linkNavigationAction || !m_linkNavigationAction->isChecked()) return;
+    const QScopedValueRollback syncing(m_syncingImageNavigation, true);
+    auto *target = source == m_originalView ? m_processedView : m_originalView;
+    target->syncNavigationFrom(*source);
 }
 
 void MainWindow::loadMask()

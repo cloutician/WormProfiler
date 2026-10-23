@@ -69,7 +69,7 @@ QIcon DesktopIcons::icon(Symbol symbol, bool onAccent)
         "chevron-up.svg", "chevron-down.svg", "maximize.svg", "scan.svg", "sliders-horizontal.svg", "rotate-ccw.svg",
         "layers-2.svg", "folder-plus.svg", "flag.svg", "check.svg", "x.svg", "info.svg", "triangle-alert.svg", "wormprofiler.png",
         "search.svg", "eraser.svg", "copy.svg", "log-out.svg", "crop.svg", "circle-check.svg", "circle-x.svg", "ruler.svg", "calendar-days.svg",
-        "undo-2.svg", "redo-2.svg"
+        "undo-2.svg", "redo-2.svg", "link-2.svg"
     };
     const QString path = QString(":/icons/%1").arg(names.at(static_cast<size_t>(symbol)));
     if (symbol == Symbol::Application) return QIcon(path);

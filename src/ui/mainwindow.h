@@ -95,6 +95,7 @@ private:
     void buildMenus();
     void buildStatusBar();
     void refreshImagePreviews();
+    void syncImageNavigation(ImageViewer *source);
     void applyProfile(const PreprocessingProfile &profile);
     PreprocessingProfile currentProfile() const;
     void loadThumbnail(int index, int generation);
@@ -148,6 +149,8 @@ private:
     QAction *m_nextAction = nullptr;
     QAction *m_fitAction = nullptr;
     QAction *m_actualSizeAction = nullptr;
+    QAction *m_linkNavigationAction = nullptr;
+    ImageViewer *m_lastNavigationView = nullptr;
     QAction *m_removeImagesAction = nullptr;
     QAction *m_clearImagesAction = nullptr;
     QAction *m_undoImagesAction = nullptr;
@@ -166,6 +169,7 @@ private:
     bool m_busy = false;
     bool m_closeWhenIdle = false;
     bool m_applyingImageHistory = false;
+    bool m_syncingImageNavigation = false;
     int m_thumbnailGeneration = 0;
 };
 

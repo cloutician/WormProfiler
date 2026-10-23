@@ -23,6 +23,7 @@ public:
     double zoomFactor() const;
     ViewState viewState() const;
     void restoreViewState(const ViewState &state);
+    void syncNavigationFrom(const ImageViewer &source);
 
 public slots:
     void fitImage();
@@ -30,16 +31,20 @@ public slots:
 
 signals:
     void zoomChanged(double factor);
+    void navigationChanged();
 
 protected:
     void resizeEvent(QResizeEvent *event) override;
     void paintEvent(QPaintEvent *event) override;
+    void scrollContentsBy(int dx, int dy) override;
 
 private:
     QGraphicsPixmapItem *m_pixmap = nullptr;
     ImageNavigation *m_navigation = nullptr;
     void navigate(double factor, const QPointF &from, const QPointF &to);
+    void notifyViewChanged();
     bool m_fit = true;
+    bool m_changingView = false;
 };
 
 #endif

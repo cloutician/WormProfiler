@@ -1,5 +1,6 @@
 #include "CropReviewWorkspace.h"
 #include "DesktopIcons.h"
+#include "ImageNavigation.h"
 
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
@@ -39,7 +40,6 @@
 #include <QtConcurrent/QtConcurrentRun>
 #include <QTimer>
 #include <QVBoxLayout>
-#include <QWheelEvent>
 
 #include <algorithm>
 #include <cmath>
@@ -51,10 +51,13 @@ CropImageView::CropImageView(QWidget *parent)
     setMouseTracking(true);
     setMinimumSize(320, 240);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    m_navigation = new ImageNavigation(this, [this] { return !m_image.isNull(); },
+        [this](double factor, const QPointF &from, const QPointF &to) { navigate(factor, from, to); });
 }
 
 void CropImageView::setImage(const QImage &image)
 {
+    m_navigation->reset();
     m_image = image;
     m_dragMode = DragNone;
     m_zoom = 1.0;
@@ -313,19 +316,18 @@ void CropImageView::mouseReleaseEvent(QMouseEvent *event)
     QWidget::mouseReleaseEvent(event);
 }
 
-void CropImageView::wheelEvent(QWheelEvent *event)
+void CropImageView::navigate(double factor, const QPointF &from, const QPointF &to)
 {
-    if (m_image.isNull()) return;
+    if (m_image.isNull() || !std::isfinite(factor) || factor <= 0.0) return;
     const QRectF oldRect = imageDrawRect();
-    const QPointF relative((event->position().x() - oldRect.left()) / oldRect.width(),
-                           (event->position().y() - oldRect.top()) / oldRect.height());
-    m_zoom = std::clamp(m_zoom * std::pow(1.15, event->angleDelta().y() / 120.0), 0.05, 64.0);
+    const QPointF relative((from.x() - oldRect.left()) / oldRect.width(),
+                           (from.y() - oldRect.top()) / oldRect.height());
+    m_zoom = std::clamp(m_zoom * factor, 0.05, 64.0);
     const QRectF nextRect = imageDrawRect();
-    m_panOffset += event->position() - QPointF(nextRect.left() + relative.x() * nextRect.width(),
-                                               nextRect.top() + relative.y() * nextRect.height());
+    m_panOffset += to - QPointF(nextRect.left() + relative.x() * nextRect.width(),
+                                nextRect.top() + relative.y() * nextRect.height());
     update();
     emit zoomChanged(zoomFactor());
-    event->accept();
 }
 
 void CropImageView::resizeEvent(QResizeEvent *event)

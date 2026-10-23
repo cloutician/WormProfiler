@@ -20,6 +20,7 @@ class QListWidget;
 class QPushButton;
 class QSpinBox;
 class QCloseEvent;
+class ImageNavigation;
 template<typename T> class QFutureWatcher;
 
 class CropImageView : public QWidget
@@ -49,7 +50,6 @@ protected:
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
-    void wheelEvent(QWheelEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
 
 private:
@@ -67,6 +67,7 @@ private:
     };
 
     QRectF imageDrawRect() const;
+    void navigate(double factor, const QPointF &from, const QPointF &to);
     QRectF cropWidgetRect() const;
     QPoint imagePointFromWidget(const QPoint &widgetPoint) const;
     QRect clampCropRect(const QRect &cropRect) const;
@@ -86,6 +87,7 @@ private:
     QPointF m_panOffset;
     QPointF m_panStart;
     bool m_panning = false;
+    ImageNavigation *m_navigation = nullptr;
 };
 
 class CropReviewWorkspace : public QWidget

@@ -13,6 +13,8 @@
 #include <QCalendarWidget>
 #include <QDateEdit>
 #include <QDoubleSpinBox>
+#include <QDragEnterEvent>
+#include <QDropEvent>
 #include <QEvent>
 #include <QEventLoop>
 #include <QApplication>
@@ -25,6 +27,7 @@
 #include <QFileDialog>
 #include <QFontDatabase>
 #include <QGridLayout>
+#include <QGraphicsPixmapItem>
 #include <QImageReader>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -32,6 +35,8 @@
 #include <QLabel>
 #include <QListWidget>
 #include <QMessageBox>
+#include <QMimeData>
+#include <QNativeGestureEvent>
 #include <QPainter>
 #include <QProgressBar>
 #include <QPushButton>
@@ -39,7 +44,9 @@
 #include <QSpinBox>
 #include <QSlider>
 #include <QLineEdit>
+#include <QLineF>
 #include <QSettings>
+#include <QSignalSpy>
 #include <QScreen>
 #include <QStyleOptionSlider>
 #include <QStyleOptionSpinBox>
@@ -52,7 +59,11 @@
 #include <QVariantAnimation>
 #include <QWheelEvent>
 #include <QWindow>
+#include <QTouchEvent>
+#include <QUrl>
+#include <QUndoStack>
 #include <algorithm>
+#include <cmath>
 #include <memory>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
@@ -174,6 +185,16 @@ private slots:
     void approvedExportRunsInBackground();
     void cropCoordinatesRemainCorrectWhenZoomed();
     void browserHandlesFolderChangesAndUnreadableImages();
+    void imageNavigationSupportsTouchAndTrackpad();
+    void cropTouchNavigationPreservesBounds();
+    void imageDropsAppendAndDeduplicate();
+    void imageRemovalPreservesSourceFiles();
+    void imageRemovalDoesNotInterceptTextEditing();
+    void imageWorkspaceUndoRestoresRemoval();
+    void imageWorkspaceUndoRestoresClearAndMask();
+    void imageWorkspaceHistoryTracksImports();
+    void imageWorkspaceUndoKeepsTextEditingLocal();
+    void imageWorkspaceUndoHandlesMissingSources();
     void reviewSetupUsesOneConfigurationDialog();
     void closingDuringExportCancelsAndCloses();
     void labelTiffMeasurementsAreExact();
@@ -1075,9 +1096,12 @@ void ReviewWorkflowTests::backgroundBatchUsesCapturedSettings()
     auto *batch = window.findChild<QAction *>("actionBatchExport");
     QVERIFY(!batch->isEnabled());
     QVERIFY(!review->exportAction()->isEnabled());
+    QVERIFY(!window.findChild<QAction *>("actionUndoImages")->isEnabled());
+    QVERIFY(!window.findChild<QAction *>("actionRedoImages")->isEnabled());
     window.findChild<QSlider *>("resizeSlider")->setValue(30);
     QTRY_VERIFY_WITH_TIMEOUT(batch->isEnabled(), 5000);
     QVERIFY(review->exportAction()->isEnabled());
+    QVERIFY(window.findChild<QAction *>("actionUndoImages")->isEnabled());
     const cv::Mat image = cv::imread(QDir(output).filePath("source_processed.png").toStdString(), cv::IMREAD_UNCHANGED);
     QCOMPARE(image.cols, 140);
     QCOMPARE(image.rows, 98);
@@ -1171,6 +1195,488 @@ void ReviewWorkflowTests::browserHandlesFolderChangesAndUnreadableImages()
     window.setImageFiles({bad}, directory.path());
     QCOMPARE(list->currentRow(), -1);
     QVERIFY(!view->hasImage());
+}
+
+void ReviewWorkflowTests::imageNavigationSupportsTouchAndTrackpad()
+{
+    ImageViewer view;
+    view.resize(640, 440);
+    QImage image(2400, 1600, QImage::Format_RGB32);
+    image.fill(QColor("#85aa96"));
+    view.setImage(image);
+    view.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&view));
+    view.actualSize();
+    QCoreApplication::processEvents();
+    QVERIFY(view.viewport()->testAttribute(Qt::WA_AcceptTouchEvents));
+    QVERIFY(!view.viewport()->acceptDrops());
+    auto *device = QTest::createTouchDevice();
+    QWidget *surface = view.viewport();
+    const QPoint center = surface->rect().center();
+    const QPointF imageCenter = view.mapToScene(center);
+    auto touch = QTest::touchEvent(surface, device, false);
+    touch.press(0, center - QPoint(100, 0)).press(1, center + QPoint(100, 0)).commit();
+    touch.move(0, center - QPoint(150, 0)).move(1, center + QPoint(150, 0)).commit();
+    QVERIFY(std::abs(view.zoomFactor() - 1.5) < 0.01);
+    QVERIFY2(QLineF(view.mapToScene(center), imageCenter).length() < 3.0,
+        qPrintable(QString("Pinch anchor moved from %1,%2 to %3,%4")
+            .arg(imageCenter.x()).arg(imageCenter.y()).arg(view.mapToScene(center).x()).arg(view.mapToScene(center).y())));
+    const QPointF beforeLift = view.mapToScene(center);
+    touch.stationary(0).release(1, center + QPoint(150, 0)).commit();
+    QVERIFY(QLineF(view.mapToScene(center), beforeLift).length() < 2.0);
+    touch.move(0, center - QPoint(110, -30)).commit();
+    const QPointF afterPan = view.mapToScene(center);
+    QVERIFY(std::abs((beforeLift.x() - afterPan.x()) * view.zoomFactor() - 40.0) < 3.0);
+    QVERIFY(std::abs((beforeLift.y() - afterPan.y()) * view.zoomFactor() - 30.0) < 3.0);
+    touch.release(0, center - QPoint(110, -30)).commit();
+
+    const QPointF beforeScroll = view.mapToScene(center);
+    const double zoom = view.zoomFactor();
+    QWheelEvent scroll(center, surface->mapToGlobal(center), QPoint(24, 18), QPoint(),
+        Qt::NoButton, Qt::NoModifier, Qt::ScrollUpdate, false);
+    QApplication::sendEvent(surface, &scroll);
+    QCOMPARE(view.zoomFactor(), zoom);
+    QVERIFY(std::abs((beforeScroll.x() - view.mapToScene(center).x()) * zoom - 24.0) < 3.0);
+    QNativeGestureEvent pinch(Qt::ZoomNativeGesture, device, 2, center, center,
+        surface->mapToGlobal(center), 0.25, QPointF());
+    QApplication::sendEvent(surface, &pinch);
+    QVERIFY(std::abs(view.zoomFactor() - zoom * 1.25) < 0.01);
+    for (int index = 0; index < 50; ++index) QApplication::sendEvent(surface, &pinch);
+    QVERIFY(view.zoomFactor() <= 32.0);
+    view.fitImage();
+    QVERIFY(view.zoomFactor() < 1.0);
+
+    QImage wide(50000, 10, QImage::Format_RGB32);
+    wide.fill(Qt::white);
+    view.setImage(wide);
+    QCoreApplication::processEvents();
+    const double fitted = view.zoomFactor();
+    QVERIFY(fitted < 0.02);
+    QWheelEvent zoomOut(center, surface->mapToGlobal(center), QPoint(), QPoint(0, -120),
+        Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+    QApplication::sendEvent(surface, &zoomOut);
+    QCOMPARE(view.zoomFactor(), fitted);
+    QWheelEvent zoomIn(center, surface->mapToGlobal(center), QPoint(), QPoint(0, 120),
+        Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+    QApplication::sendEvent(surface, &zoomIn);
+    QVERIFY(std::abs(view.zoomFactor() - fitted * 1.15) < 0.0001);
+
+    view.setImage(QImage());
+    QWheelEvent emptyScroll(center, surface->mapToGlobal(center), QPoint(), QPoint(0, 120),
+        Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+    QApplication::sendEvent(surface, &emptyScroll);
+    QVERIFY(!view.hasImage());
+}
+
+void ReviewWorkflowTests::cropTouchNavigationPreservesBounds()
+{
+    CropImageView view;
+    view.resize(640, 440);
+    QImage image(1200, 800, QImage::Format_RGB32);
+    image.fill(QColor("#d3ddd7"));
+    view.setImage(image);
+    const QRect crop(350, 250, 400, 250);
+    view.setCropRect(crop);
+    view.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&view));
+    view.actualSize();
+    QSignalSpy changes(&view, &CropImageView::cropRectChanged);
+    auto *device = QTest::createTouchDevice();
+    const QPoint center = view.rect().center();
+    auto touch = QTest::touchEvent(&view, device, false);
+    touch.press(0, center - QPoint(100, 0)).press(1, center + QPoint(100, 0)).commit();
+    touch.move(0, center - QPoint(150, 0)).move(1, center + QPoint(150, 0)).commit();
+    QVERIFY(std::abs(view.zoomFactor() - 1.5) < 0.01);
+    touch.release(0, center - QPoint(150, 0)).release(1, center + QPoint(150, 0)).commit();
+    touch.press(0, center).commit();
+    touch.move(0, center + QPoint(40, 30)).commit();
+    QTouchEvent cancel(QEvent::TouchCancel, device);
+    QApplication::sendEvent(&view, &cancel);
+    touch.release(0, center + QPoint(40, 30)).commit();
+    QCOMPARE(view.cropRect(), crop);
+    QCOMPARE(changes.count(), 0);
+    const double zoom = view.zoomFactor();
+    QWheelEvent scroll(center, view.mapToGlobal(center), QPoint(30, -20), QPoint(),
+        Qt::NoButton, Qt::NoModifier, Qt::ScrollUpdate, false);
+    QApplication::sendEvent(&view, &scroll);
+    QCOMPARE(view.zoomFactor(), zoom);
+    QCOMPARE(view.cropRect(), crop);
+    view.fitImage();
+    QVERIFY(view.zoomFactor() < 1.0);
+}
+
+void ReviewWorkflowTests::imageDropsAppendAndDeduplicate()
+{
+    QTemporaryDir directory;
+    const QString first = directory.filePath("first.png");
+    const QString folder = directory.filePath("added");
+    QVERIFY(QDir().mkpath(folder));
+    const QString second = QDir(folder).filePath("second.PNG");
+    const QString third = QDir(folder).filePath("third.tif");
+    QVERIFY(writeImage(first)); QVERIFY(writeImage(second)); QVERIFY(writeImage(third, true));
+    const QByteArray sourceBytes = readFile(first);
+    MainWindow window;
+    window.setImageFiles({first});
+    auto *list = window.findChild<QListWidget *>("preparationImageList");
+    auto *tabs = window.findChild<QTabWidget *>("workspaces");
+    QMimeData mime;
+    mime.setUrls({QUrl::fromLocalFile(first), QUrl::fromLocalFile(folder), QUrl::fromLocalFile(second), QUrl("https://example.invalid/image.png")});
+    QDragEnterEvent enter(QPoint(300, 250), Qt::CopyAction | Qt::MoveAction, &mime, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(&window, &enter);
+    QVERIFY(enter.isAccepted());
+    QCOMPARE(enter.dropAction(), Qt::CopyAction);
+    QDropEvent drop(QPointF(300, 250), Qt::CopyAction | Qt::MoveAction, &mime, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(&window, &drop);
+    QVERIFY(drop.isAccepted());
+    QCOMPARE(drop.dropAction(), Qt::CopyAction);
+    QCOMPARE(list->count(), 3);
+    QVERIFY(window.windowTitle().contains("second.PNG"));
+    QCOMPARE(readFile(first), sourceBytes);
+    QVERIFY(QFileInfo::exists(second)); QVERIFY(QFileInfo::exists(third));
+    QApplication::sendEvent(&window, &enter);
+    QApplication::sendEvent(&window, &drop);
+    QCOMPARE(list->count(), 3);
+
+    QMimeData remote;
+    remote.setUrls({QUrl("https://example.invalid/image.png")});
+    QDragEnterEvent rejected(QPoint(300, 250), Qt::CopyAction, &remote, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(&window, &rejected);
+    QVERIFY(!rejected.isAccepted());
+    tabs->setCurrentIndex(2);
+    QDragEnterEvent wrongWorkspace(QPoint(300, 250), Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(&window, &wrongWorkspace);
+    QVERIFY(!wrongWorkspace.isAccepted());
+    QVERIFY(!window.findChild<QAction *>("actionRemoveImages")->isEnabled());
+    tabs->setCurrentIndex(0);
+    const QString bad = directory.filePath("bad.png");
+    QFile invalid(bad);
+    QVERIFY(invalid.open(QIODevice::WriteOnly));
+    invalid.write("not an image"); invalid.close();
+    QMimeData broken;
+    broken.setUrls({QUrl::fromLocalFile(bad)});
+    QDragEnterEvent badEnter(QPoint(300, 250), Qt::CopyAction, &broken, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(&window, &badEnter);
+    QDropEvent badDrop(QPointF(300, 250), Qt::CopyAction, &broken, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(&window, &badDrop);
+    QCOMPARE(list->count(), 4);
+    QVERIFY(window.windowTitle().contains("second.PNG"));
+    QVERIFY(window.findChild<ImageViewer *>("originalImageView")->hasImage());
+    list->setCurrentRow(3);
+    QVERIFY(list->item(3)->isSelected());
+    QVERIFY(window.findChild<QAction *>("actionRemoveImages")->isEnabled());
+    window.findChild<QAction *>("actionRemoveImages")->trigger();
+    QCOMPARE(list->count(), 3);
+    QVERIFY(window.windowTitle().contains("second.PNG"));
+    QCOMPARE(readFile(bad), QByteArray("not an image"));
+}
+
+void ReviewWorkflowTests::imageRemovalPreservesSourceFiles()
+{
+    QTemporaryDir directory;
+    const QString first = directory.filePath("first.png"), second = directory.filePath("second.png"), third = directory.filePath("third.png");
+    QVERIFY(writeImage(first)); QVERIFY(writeImage(second)); QVERIFY(writeImage(third));
+    const QByteArray bytes = readFile(first);
+    MainWindow window;
+    window.resize(1280, 800);
+    window.setImageFiles({first, second, third}, directory.path());
+    QVERIFY(!window.findChild<QAction *>("actionTrashImages"));
+    QCOMPARE(window.metaObject()->indexOfSlot("trashSelectedImages()"), -1);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    auto *list = window.findChild<QListWidget *>("preparationImageList");
+    QTest::mouseClick(list->viewport(), Qt::LeftButton, Qt::NoModifier, list->visualItemRect(list->item(1)).center());
+    QTest::mouseClick(list->viewport(), Qt::LeftButton, Qt::ControlModifier, list->visualItemRect(list->item(0)).center());
+    QCOMPARE(list->selectedItems().size(), 2);
+    const QString artifacts = qEnvironmentVariable("WORMPROFILER_TEST_ARTIFACT_DIR");
+    if (!artifacts.isEmpty()) window.grab().save(QDir(artifacts).filePath("image-management-workspace.png"));
+    auto *original = window.findChild<ImageViewer *>("originalImageView");
+    original->setFocus();
+    QTest::keyClick(original, Qt::Key_Delete);
+    QCOMPARE(list->count(), 1);
+    QCOMPARE(list->item(0)->text(), QString("third.png"));
+    QVERIFY(window.windowTitle().contains("third.png"));
+    QCOMPARE(readFile(first), bytes);
+    QVERIFY(QFileInfo::exists(second)); QVERIFY(QFileInfo::exists(third));
+    QTest::keyClick(list, Qt::Key_Delete);
+    QCOMPARE(list->count(), 0);
+    QVERIFY(!window.findChild<ImageViewer *>("originalImageView")->hasImage());
+    QVERIFY(!window.findChild<ImageViewer *>("processedImageView")->hasImage());
+    QVERIFY(!window.findChild<QAction *>("actionRemoveImages")->isEnabled());
+    QVERIFY(!window.findChild<QAction *>("actionClearImages")->isEnabled());
+    QCOMPARE(window.windowTitle(), QString("WormProfiler"));
+    QVERIFY(!window.findChild<QCheckBox *>("showMaskCheckBox")->isEnabled());
+
+    window.setImageFiles({first, second, third});
+    list->item(1)->setSelected(true);
+    auto *search = window.findChild<QLineEdit *>("imageSearch");
+    search->setText("first");
+    QVERIFY(!list->item(1)->isSelected());
+    window.findChild<QAction *>("actionRemoveImages")->trigger();
+    QCOMPARE(list->count(), 2);
+    QVERIFY(search->text().isEmpty());
+    QVERIFY(list->item(0)->text() != "first.png");
+    window.findChild<QAction *>("actionClearImages")->trigger();
+    QCOMPARE(list->count(), 0);
+    QCOMPARE(readFile(first), bytes);
+    QVERIFY(QFileInfo::exists(second)); QVERIFY(QFileInfo::exists(third));
+    window.setImageFiles({first, second, third});
+    list->setCurrentRow(2);
+    list->clearSelection();
+    list->item(0)->setSelected(true);
+    original->actualSize();
+    window.findChild<QAction *>("actionRemoveImages")->trigger();
+    QCOMPARE(list->count(), 2);
+    QVERIFY(window.windowTitle().contains("third.png"));
+    QCOMPARE(original->zoomFactor(), 1.0);
+    QCoreApplication::processEvents();
+}
+
+void ReviewWorkflowTests::imageRemovalDoesNotInterceptTextEditing()
+{
+    QTemporaryDir directory;
+    const QString source = directory.filePath("sample.png");
+    QVERIFY(writeImage(source));
+    MainWindow window;
+    window.setImageFiles({source});
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    auto *search = window.findChild<QLineEdit *>("imageSearch");
+    search->setFocus();
+    search->setText("sam");
+    search->setCursorPosition(0);
+    QTest::keyClick(search, Qt::Key_Delete);
+    QCOMPARE(search->text(), QString("am"));
+    QCOMPARE(window.findChild<QListWidget *>("preparationImageList")->count(), 1);
+    QVERIFY(QFileInfo::exists(source));
+}
+
+void ReviewWorkflowTests::imageWorkspaceUndoRestoresRemoval()
+{
+    QTemporaryDir directory;
+    const QString first = directory.filePath("worm-01.png"), second = directory.filePath("worm-02.png"),
+        third = directory.filePath("other.png");
+    QVERIFY(writeImage(first)); QVERIFY(writeImage(second)); QVERIFY(writeImage(third));
+    const QByteArray firstBytes = readFile(first), secondBytes = readFile(second);
+    MainWindow window;
+    window.resize(1280, 800);
+    window.setImageFiles({first, second, third}, directory.path());
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    auto *history = window.findChild<QUndoStack *>("imageWorkspaceHistory");
+    auto *undo = window.findChild<QAction *>("actionUndoImages");
+    auto *redo = window.findChild<QAction *>("actionRedoImages");
+    QVERIFY(history && undo && redo);
+    history->clear();
+    auto *list = window.findChild<QListWidget *>("preparationImageList");
+    auto *search = window.findChild<QLineEdit *>("imageSearch");
+    auto *original = window.findChild<ImageViewer *>("originalImageView");
+    auto *processed = window.findChild<ImageViewer *>("processedImageView");
+    list->setCurrentRow(1);
+    list->item(0)->setSelected(true);
+    search->setText("worm");
+    original->restoreViewState({false, 4.0, QPointF(90, 70)});
+    processed->restoreViewState({false, 8.0, QPointF(50, 35)});
+    QCoreApplication::processEvents();
+    const auto originalState = original->viewState(), processedState = processed->viewState();
+    window.findChild<QAction *>("actionRemoveImages")->trigger();
+    QCOMPARE(list->count(), 1);
+    QCOMPARE(history->count(), 1);
+    QVERIFY(undo->isEnabled());
+    QVERIFY(!undo->icon().isNull()); QVERIFY(!redo->icon().isNull());
+    original->setFocus();
+    QTest::keyClick(original, Qt::Key_Z, Qt::ControlModifier);
+    QCoreApplication::processEvents();
+    QCOMPARE(list->count(), 3);
+    QCOMPARE(list->item(0)->text(), QString("worm-01.png"));
+    QCOMPARE(list->item(1)->text(), QString("worm-02.png"));
+    QCOMPARE(list->item(2)->text(), QString("other.png"));
+    QCOMPARE(list->currentRow(), 1);
+    QCOMPARE(list->selectedItems().size(), 2);
+    QCOMPARE(search->text(), QString("worm"));
+    QVERIFY(list->item(2)->isHidden());
+    QVERIFY(window.windowTitle().contains("worm-02.png"));
+    QCOMPARE(original->zoomFactor(), originalState.zoom);
+    QCOMPARE(processed->zoomFactor(), processedState.zoom);
+    QVERIFY(QLineF(original->viewState().center, originalState.center).length() < 2.0);
+    QVERIFY(QLineF(processed->viewState().center, processedState.center).length() < 2.0);
+    QVERIFY(!undo->isEnabled()); QVERIFY(redo->isEnabled());
+    const QString artifacts = qEnvironmentVariable("WORMPROFILER_TEST_ARTIFACT_DIR");
+    if (!artifacts.isEmpty()) window.grab().save(QDir(artifacts).filePath("workspace-undo-restored.png"));
+    QTest::keyClick(original, Qt::Key_Y, Qt::ControlModifier);
+    QCOMPARE(list->count(), 1);
+    QVERIFY(search->text().isEmpty());
+    undo->trigger();
+    QTest::keyClick(original, Qt::Key_Z, Qt::ControlModifier | Qt::ShiftModifier);
+    QCOMPARE(list->count(), 1);
+    QCOMPARE(readFile(first), firstBytes); QCOMPARE(readFile(second), secondBytes);
+    QVERIFY(QFileInfo::exists(third));
+}
+
+void ReviewWorkflowTests::imageWorkspaceUndoRestoresClearAndMask()
+{
+    QTemporaryDir directory;
+    const QString source = directory.filePath("source.png"), mask = directory.filePath("mask.png");
+    QVERIFY(writeImage(source));
+    QImage labels(200, 140, QImage::Format_Grayscale8);
+    labels.fill(255);
+    QVERIFY(labels.save(mask));
+    const QByteArray sourceBytes = readFile(source), maskBytes = readFile(mask);
+    MainWindow window;
+    window.setImageFiles({source}, directory.path());
+    QTimer::singleShot(0, [mask] {
+        if (auto *dialog = qobject_cast<QFileDialog *>(QApplication::activeModalWidget())) {
+            dialog->selectFile(mask);
+            QMetaObject::invokeMethod(dialog, "accept");
+        }
+    });
+    QVERIFY(QMetaObject::invokeMethod(&window, "loadMask"));
+    auto *overlay = window.findChild<QCheckBox *>("showMaskCheckBox");
+    QVERIFY(overlay->isChecked());
+    QSlider *opacity = nullptr;
+    for (auto *slider : window.findChildren<QSlider *>()) {
+        if (slider->accessibleName() == "Mask opacity") opacity = slider;
+    }
+    QVERIFY(opacity);
+    opacity->setValue(67);
+    auto *processed = window.findChild<ImageViewer *>("processedImageView");
+    auto *pixmap = qgraphicsitem_cast<QGraphicsPixmapItem *>(processed->scene()->items().first());
+    QVERIFY(pixmap);
+    const QImage before = pixmap->pixmap().toImage();
+    auto *history = window.findChild<QUndoStack *>("imageWorkspaceHistory");
+    history->clear();
+    auto *clear = window.findChild<QAction *>("actionClearImages");
+    auto *undo = window.findChild<QAction *>("actionUndoImages");
+    auto *redo = window.findChild<QAction *>("actionRedoImages");
+    clear->trigger();
+    QVERIFY(!processed->hasImage());
+    QVERIFY(undo->isEnabled());
+    window.findChild<QCheckBox *>("normalizeCheckBox")->setChecked(false);
+    undo->trigger();
+    QCOMPARE(window.findChild<QListWidget *>("preparationImageList")->count(), 1);
+    QVERIFY(overlay->isChecked()); QCOMPARE(opacity->value(), 67);
+    QVERIFY(!window.findChild<QCheckBox *>("normalizeCheckBox")->isChecked());
+    QCOMPARE(pixmap->pixmap().toImage(), before);
+    redo->trigger();
+    QVERIFY(!processed->hasImage()); QVERIFY(!overlay->isEnabled());
+    undo->trigger();
+    QVERIFY(overlay->isChecked());
+    QCOMPARE(readFile(source), sourceBytes); QCOMPARE(readFile(mask), maskBytes);
+}
+
+void ReviewWorkflowTests::imageWorkspaceHistoryTracksImports()
+{
+    QTemporaryDir directory;
+    const QString first = directory.filePath("first.png"), second = directory.filePath("second.png"),
+        third = directory.filePath("third.png"), bad = directory.filePath("bad.png");
+    QVERIFY(writeImage(first)); QVERIFY(writeImage(second)); QVERIFY(writeImage(third));
+    QFile invalid(bad);
+    QVERIFY(invalid.open(QIODevice::WriteOnly)); invalid.write("not an image"); invalid.close();
+    MainWindow window;
+    auto *history = window.findChild<QUndoStack *>("imageWorkspaceHistory");
+    auto *undo = window.findChild<QAction *>("actionUndoImages");
+    auto *redo = window.findChild<QAction *>("actionRedoImages");
+    auto *list = window.findChild<QListWidget *>("preparationImageList");
+    QVERIFY(!undo->isEnabled()); QVERIFY(!redo->isEnabled());
+    QCOMPARE(history->undoLimit(), 100);
+    QVERIFY(window.loadImagePath(first));
+    QVERIFY(window.loadImagePath(second));
+    QCOMPARE(history->count(), 2);
+    undo->trigger();
+    QCOMPARE(list->count(), 1);
+    QVERIFY(window.windowTitle().contains("first.png"));
+    QVERIFY(!window.loadImagePath(bad));
+    QVERIFY(redo->isEnabled());
+    QVERIFY(window.loadImagePath(third));
+    QVERIFY(!redo->isEnabled()); QCOMPARE(history->count(), 2);
+    undo->trigger();
+    QMimeData mime;
+    mime.setUrls({QUrl::fromLocalFile(second), QUrl::fromLocalFile(third)});
+    QDragEnterEvent enter(QPoint(300, 250), Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(&window, &enter);
+    QDropEvent drop(QPointF(300, 250), Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(&window, &drop);
+    QCOMPARE(list->count(), 3); QCOMPARE(history->count(), 2);
+    undo->trigger(); QCOMPARE(list->count(), 1);
+    redo->trigger(); QCOMPARE(list->count(), 3);
+    const int commands = history->count();
+    QApplication::sendEvent(&window, &enter);
+    QApplication::sendEvent(&window, &drop);
+    QCOMPARE(history->count(), commands);
+    window.setImageFiles({third}, directory.path());
+    QCOMPARE(list->count(), 1);
+    undo->trigger(); QCOMPARE(list->count(), 3);
+    redo->trigger(); QCOMPARE(list->count(), 1);
+    while (undo->isEnabled()) undo->trigger();
+    QCOMPARE(list->count(), 0);
+    QVERIFY(QFileInfo::exists(first)); QVERIFY(QFileInfo::exists(second)); QVERIFY(QFileInfo::exists(third));
+}
+
+void ReviewWorkflowTests::imageWorkspaceUndoKeepsTextEditingLocal()
+{
+    QTemporaryDir directory;
+    const QString source = directory.filePath("sample.png");
+    QVERIFY(writeImage(source));
+    MainWindow window;
+    window.setImageFiles({source});
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    auto *history = window.findChild<QUndoStack *>("imageWorkspaceHistory");
+    auto *undo = window.findChild<QAction *>("actionUndoImages");
+    auto *redo = window.findChild<QAction *>("actionRedoImages");
+    auto *list = window.findChild<QListWidget *>("preparationImageList");
+    auto *search = window.findChild<QLineEdit *>("imageSearch");
+    window.findChild<QAction *>("actionClearImages")->trigger();
+    const int index = history->index();
+    search->setFocus();
+    QTest::keyClicks(search, "sample");
+    QTest::keyClick(search, Qt::Key_Z, Qt::ControlModifier);
+    QVERIFY(search->text().isEmpty()); QCOMPARE(history->index(), index); QCOMPARE(list->count(), 0);
+    QTest::keyClick(search, Qt::Key_Z, Qt::ControlModifier);
+    QCOMPARE(history->index(), index);
+    QTest::keyClick(search, Qt::Key_Y, Qt::ControlModifier);
+    QCOMPARE(search->text(), QString("sample")); QCOMPARE(list->count(), 0);
+    undo->trigger(); QCOMPARE(list->count(), 1);
+    search->setFocus();
+    search->clear();
+    QTest::keyClicks(search, "sample");
+    const int restoredIndex = history->index();
+    QTest::keyClick(search, Qt::Key_Z, Qt::ControlModifier);
+    QTest::keyClick(search, Qt::Key_Z, Qt::ControlModifier | Qt::ShiftModifier);
+    QCOMPARE(history->index(), restoredIndex);
+    QCOMPARE(search->text(), QString("sample"));
+    auto *tabs = window.findChild<QTabWidget *>("workspaces");
+    tabs->setCurrentIndex(2);
+    QVERIFY(!undo->isEnabled()); QVERIFY(!redo->isEnabled());
+    undo->trigger(); QCOMPARE(list->count(), 1);
+    tabs->setCurrentIndex(0);
+    QVERIFY(undo->isEnabled());
+}
+
+void ReviewWorkflowTests::imageWorkspaceUndoHandlesMissingSources()
+{
+    QTemporaryDir directory;
+    const QString first = directory.filePath("first.png"), second = directory.filePath("second.png"),
+        moved = directory.filePath("temporarily-moved.png");
+    QVERIFY(writeImage(first)); QVERIFY(writeImage(second));
+    const QByteArray bytes = readFile(second);
+    MainWindow window;
+    window.setImageFiles({first, second});
+    auto *list = window.findChild<QListWidget *>("preparationImageList");
+    list->setCurrentRow(1);
+    window.findChild<QAction *>("actionClearImages")->trigger();
+    QVERIFY(QFile::rename(second, moved));
+    auto *undo = window.findChild<QAction *>("actionUndoImages");
+    auto *redo = window.findChild<QAction *>("actionRedoImages");
+    undo->trigger();
+    QCOMPARE(list->count(), 2);
+    QVERIFY(!QFileInfo::exists(second)); QCOMPARE(readFile(moved), bytes);
+    QVERIFY(window.windowTitle().contains("first.png"));
+    redo->trigger(); QCOMPARE(list->count(), 0);
+    QVERIFY(QFile::rename(moved, second));
+    undo->trigger();
+    QCOMPARE(list->currentRow(), 1);
+    QVERIFY(window.windowTitle().contains("second.png"));
+    QCOMPARE(readFile(second), bytes);
 }
 
 void ReviewWorkflowTests::reviewSetupUsesOneConfigurationDialog()

@@ -5,15 +5,24 @@
 #include <QImage>
 
 class QGraphicsPixmapItem;
+class ImageNavigation;
 
 class ImageViewer : public QGraphicsView
 {
     Q_OBJECT
 public:
+    struct ViewState {
+        bool fitted = true;
+        double zoom = 1.0;
+        QPointF center;
+    };
+
     explicit ImageViewer(QWidget *parent = nullptr);
     void setImage(const QImage &image);
     bool hasImage() const;
     double zoomFactor() const;
+    ViewState viewState() const;
+    void restoreViewState(const ViewState &state);
 
 public slots:
     void fitImage();
@@ -24,11 +33,12 @@ signals:
 
 protected:
     void resizeEvent(QResizeEvent *event) override;
-    void wheelEvent(QWheelEvent *event) override;
     void paintEvent(QPaintEvent *event) override;
 
 private:
     QGraphicsPixmapItem *m_pixmap = nullptr;
+    ImageNavigation *m_navigation = nullptr;
+    void navigate(double factor, const QPointF &from, const QPointF &to);
     bool m_fit = true;
 };
 

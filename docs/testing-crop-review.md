@@ -11,6 +11,25 @@
 
 Switch between Image preparation and Crop review during the checks below. Image settings and review decisions should remain available in their own workspace.
 
+## Touch and image management
+
+1. In Image preparation, drop one or more PNG, JPEG, BMP, or TIFF files from File Explorer onto either image pane or the image browser. Existing images should remain, and the first readable new image should be selected.
+2. Drop a folder. Supported files directly inside it should be added, without importing nested folders. Drop the same files again: the list must not gain duplicates. Remote URLs and non-image files must not replace the current image.
+3. On a touchscreen, pinch over an image to zoom around the gesture centre, then drag with one finger to pan an enlarged image. Adding or lifting a finger should not jump the image. Repeat in Crop review and Worm profiles. Navigation must not alter crop bounds, tissue labels, or measurements.
+4. Try native trackpad pinch and two-finger pixel scrolling where the operating system provides them. Mouse-wheel zoom and mouse dragging should still work. Fit and Actual size must restore predictable views.
+5. Select several images in the preparation browser with Ctrl or Shift. Use the remove toolbar button, context menu, or Delete while the browser or an image view has focus. Only the selected visible entries should disappear; source files must remain unchanged. The next available image should be selected if the active image was removed.
+6. Filter the browser, then remove matching entries. Hidden entries must not be removed accidentally. Type in the search field and press Delete: it must edit the text, not remove an image.
+7. Use Clear image workspace. Both previews, file-specific metadata, mask state, and image actions should reset. Preprocessing settings should remain available for the next import.
+8. During background processing, image removal and drops should be disabled. Crop review and Worm profiles must not accept preparation-image drops or activate preparation removal commands.
+9. Remove several selected images, then use Undo (`Ctrl+Z`) from the image browser or viewer. Check image order, active image, selection, filter, and both viewers' zoom/pan. Clear the workspace and undo again: the original set and any loaded mask/overlay should return.
+10. Redo with `Ctrl+Y` or `Ctrl+Shift+Z`, or the curved-arrow toolbar buttons. Multiple removals and clears should undo and redo in order. Imports and opening another image set should each create one history entry; a new change after Undo discards the old redo branch. Duplicate imports and failed opens should not create entries.
+11. Edit the search field and use Undo/Redo: it must edit the field without changing the image list. History actions must be disabled in other workspaces and during background jobs, then become available again on return.
+12. With disposable sample data, temporarily move a source image outside the application after clearing the workspace, then undo. Its entry should return with an unavailable-source warning, without recreating or changing the file. Restore the source at its original path, redo and undo, and check that it can be displayed again.
+
+Image-list history is limited to 100 changes in the current application run. It restores file references and view state, not source-file contents or preprocessing/crop/profile edits. Undo and Redo never move or delete original files.
+
+The automated input checks use synthetic touch events and generated images. Physical touchscreen and trackpad behaviour still needs a check on the intended hardware and Windows gesture settings.
+
 ## Start a review
 
 1. Use **Review > New review**, or New review in the Crop review toolbar. Choose the image folder, ONNX model, margin, and threshold, then select Run model.
@@ -60,6 +79,10 @@ Sessions reference the original image files; they do not embed image copies. Kee
 ## Automated checks
 
 The CMake test target `WormProfilerTests` covers JSON validation and round trips, integrated workspace state, folder changes, unreadable images, zoomed crop coordinates, background processing, approval invalidation, unsaved-change prompts, cancellation, export collisions, CSV escaping, and preservation of 16-bit crop pixels.
+
+Input-management checks cover touchscreen pan and pinch, finger transitions, touch cancellation, native zoom and pixel scrolling, unchanged crop geometry, file/folder drops, duplicate imports, multi-selection removal, source-file preservation, and text-editing shortcuts. Image removal is strictly workspace-only; original files must not be moved or deleted.
+
+History checks cover multi-image removal, clearing and mask restoration, import grouping, redo-branch invalidation, failed and duplicate imports, viewer state, text-editing shortcut isolation, busy/workspace action states, and unavailable source files.
 
 The desktop-control checks also cover slider keyboard input, track clicks and dragging, independent checkboxes, exclusive radio buttons, spinbox steppers, dropdown keyboard input, and nonempty vector icons at 100%, 150%, and 200% scale. Setting `WORMPROFILER_TEST_ARTIFACT_DIR` captures both workspaces at several window sizes and a control-state preview.
 

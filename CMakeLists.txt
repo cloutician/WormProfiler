@@ -22,6 +22,8 @@ set(APP_SOURCES
     src/ui/mainwindow.ui
     src/ui/ImageViewer.cpp
     src/ui/ImageViewer.h
+    src/ui/ImageNavigation.cpp
+    src/ui/ImageNavigation.h
     src/ui/DesktopStyle.cpp
     src/ui/DesktopStyle.h
     src/ui/DesktopIcons.cpp

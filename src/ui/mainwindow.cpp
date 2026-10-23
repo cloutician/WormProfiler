@@ -15,6 +15,8 @@
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QDoubleSpinBox>
+#include <QDragEnterEvent>
+#include <QDropEvent>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
@@ -26,13 +28,16 @@
 #include <QListWidget>
 #include <QMenu>
 #include <QMessageBox>
+#include <QMimeData>
 #include <QProgressBar>
 #include <QPromise>
 #include <QPushButton>
 #include <QSaveFile>
 #include <QScrollArea>
 #include <QScreen>
+#include <QScopedValueRollback>
 #include <QSettings>
+#include <QSet>
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QStyle>
@@ -42,14 +47,39 @@
 #include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
+#include <QUrl>
+#include <QUndoStack>
 #include <QVBoxLayout>
 #include <QtConcurrent/QtConcurrentRun>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 namespace {
+QString imagePath(const QString &path)
+{
+    const QFileInfo info(path);
+    const QString canonical = info.canonicalFilePath();
+    return canonical.isEmpty() ? QDir::cleanPath(info.absoluteFilePath()) : canonical;
+}
+
+QString imagePathKey(const QString &path)
+{
+#ifdef Q_OS_WIN
+    return imagePath(path).toCaseFolded();
+#else
+    return imagePath(path);
+#endif
+}
+
+bool supportedImage(const QFileInfo &info)
+{
+    static const QStringList suffixes = {"png", "jpg", "jpeg", "bmp", "tif", "tiff"};
+    return info.isFile() && suffixes.contains(info.suffix().toLower());
+}
+
 QLabel *section(QVBoxLayout *layout, const QString &text)
 {
     auto *label = new QLabel(text);
@@ -81,9 +111,34 @@ QWidget *pathField(QLineEdit *edit, QWidget *parent, const std::function<void()>
 }
 }
 
+class MainWindow::ImageWorkspaceCommand final : public QUndoCommand
+{
+public:
+    ImageWorkspaceCommand(MainWindow *window, QString description, ImageWorkspaceState before, ImageWorkspaceState after)
+        : QUndoCommand(description), m_window(window), m_before(std::move(before)), m_after(std::move(after)) {}
+
+    void undo() override { m_window->restoreImageWorkspace(m_before); }
+    void redo() override
+    {
+        // The initial edit is already applied when its before/after states are recorded.
+        if (m_firstRedo) { m_firstRedo = false; return; }
+        m_window->restoreImageWorkspace(m_after);
+    }
+
+private:
+    MainWindow *m_window;
+    ImageWorkspaceState m_before;
+    ImageWorkspaceState m_after;
+    bool m_firstRedo = true;
+};
+
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
+    m_imageUndoStack = new QUndoStack(this);
+    m_imageUndoStack->setObjectName("imageWorkspaceHistory");
+    m_imageUndoStack->setUndoLimit(100);
+    setAcceptDrops(true);
     setWindowIcon(DesktopIcons::icon(DesktopIcons::Symbol::Application));
     buildPreparationWorkspace();
     m_review = new CropReviewWorkspace({}, this);
@@ -149,6 +204,9 @@ MainWindow::~MainWindow()
 {
     if (m_jobCancel) m_jobCancel->store(true);
     if (m_jobWatcher) m_jobWatcher->waitForFinished();
+    disconnect(m_imageUndoStack, nullptr, this, nullptr);
+    delete m_imageUndoStack;
+    m_imageUndoStack = nullptr;
     delete ui;
 }
 
@@ -196,6 +254,7 @@ void MainWindow::buildPreparationWorkspace()
     m_imageList->setObjectName("preparationImageList");
     m_imageList->setIconSize(QSize(64, 48));
     m_imageList->setTextElideMode(Qt::ElideMiddle);
+    m_imageList->setSelectionMode(QAbstractItemView::ExtendedSelection);
     browserLayout->addWidget(m_imageList, 1);
     m_folderLabel = new QLabel("0 images", browser);
     m_folderLabel->setObjectName("secondaryText");
@@ -339,13 +398,18 @@ void MainWindow::buildPreparationWorkspace()
         if (row >= 0 && row < m_imagePaths.size() && !loadImagePath(m_imagePaths[row])) {
             m_imageList->item(row)->setIcon(style()->standardIcon(QStyle::SP_MessageBoxWarning));
             const QSignalBlocker blocker(m_imageList);
-            m_imageList->setCurrentRow(m_imagePaths.indexOf(m_currentPath));
+            m_imageList->setCurrentRow(m_imagePaths.indexOf(m_currentPath), QItemSelectionModel::NoUpdate);
+            updateActions();
         }
     });
     connect(m_imageList, &QListWidget::itemDoubleClicked, this, [this] { if (!m_currentPath.isEmpty()) loadImagePath(m_currentPath); });
+    connect(m_imageList, &QListWidget::itemSelectionChanged, this, &MainWindow::updateActions);
     connect(m_imageSearch, &QLineEdit::textChanged, this, [this](const QString &text) {
         for (int index = 0; index < m_imagePaths.size(); ++index) {
-            m_imageList->item(index)->setHidden(!QFileInfo(m_imagePaths[index]).fileName().contains(text, Qt::CaseInsensitive));
+            auto *item = m_imageList->item(index);
+            const bool hidden = !QFileInfo(m_imagePaths[index]).fileName().contains(text, Qt::CaseInsensitive);
+            item->setHidden(hidden);
+            if (hidden) item->setSelected(false);
         }
         updateActions();
     });
@@ -394,6 +458,39 @@ void MainWindow::buildMenus()
     m_exportImageAction = fileMenu->addAction(DesktopIcons::icon(DesktopIcons::Symbol::Export), "Export processed image...", this, &MainWindow::saveProcessedImage);
     fileMenu->addAction(m_review->exportAction());
     fileMenu->addAction(m_profiles->exportAction());
+    fileMenu->addSeparator();
+    m_removeImagesAction = fileMenu->addAction(DesktopIcons::icon(DesktopIcons::Symbol::Close), "Remove selected images", this, &MainWindow::removeSelectedImages);
+    m_removeImagesAction->setObjectName("actionRemoveImages");
+    m_removeImagesAction->setToolTip("Remove selected images from the workspace; source files are kept");
+    m_removeImagesAction->setShortcut(QKeySequence::Delete);
+    m_removeImagesAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    m_clearImagesAction = fileMenu->addAction(DesktopIcons::icon(DesktopIcons::Symbol::Clear), "Clear image workspace", this, &MainWindow::clearImages);
+    m_clearImagesAction->setObjectName("actionClearImages");
+    m_clearImagesAction->setToolTip("Remove all images from Image preparation; source files are kept");
+    auto *editMenu = ui->menubar->addMenu("&Edit");
+    m_undoImagesAction = m_imageUndoStack->createUndoAction(this, "Undo");
+    m_undoImagesAction->setObjectName("actionUndoImages");
+    m_undoImagesAction->setIcon(DesktopIcons::icon(DesktopIcons::Symbol::Undo));
+    m_undoImagesAction->setShortcuts(QKeySequence::Undo);
+    m_undoImagesAction->setToolTip("Undo the last image-list change (Ctrl+Z)");
+    m_redoImagesAction = m_imageUndoStack->createRedoAction(this, "Redo");
+    m_redoImagesAction->setObjectName("actionRedoImages");
+    m_redoImagesAction->setIcon(DesktopIcons::icon(DesktopIcons::Symbol::Redo));
+    auto redoShortcuts = QKeySequence::keyBindings(QKeySequence::Redo);
+    const QKeySequence alternateRedo("Ctrl+Shift+Z");
+    if (!redoShortcuts.contains(alternateRedo)) redoShortcuts.append(alternateRedo);
+    m_redoImagesAction->setShortcuts(redoShortcuts);
+    m_redoImagesAction->setToolTip("Redo the last image-list change (Ctrl+Y or Ctrl+Shift+Z)");
+    editMenu->addActions({m_undoImagesAction, m_redoImagesAction});
+    connect(m_imageUndoStack, &QUndoStack::indexChanged, this, &MainWindow::updateActions);
+    connect(m_imageUndoStack, &QUndoStack::canUndoChanged, this, &MainWindow::updateActions);
+    connect(m_imageUndoStack, &QUndoStack::canRedoChanged, this, &MainWindow::updateActions);
+    auto *historySeparator = new QAction(this);
+    historySeparator->setSeparator(true);
+    for (QWidget *surface : {static_cast<QWidget *>(m_imageList), static_cast<QWidget *>(m_originalView), static_cast<QWidget *>(m_processedView)}) {
+        surface->addActions({m_undoImagesAction, m_redoImagesAction, historySeparator, m_removeImagesAction, m_clearImagesAction});
+        surface->setContextMenuPolicy(Qt::ActionsContextMenu);
+    }
     fileMenu->addSeparator();
     auto *quit = fileMenu->addAction("Exit", this, &QWidget::close);
     quit->setIcon(DesktopIcons::icon(DesktopIcons::Symbol::Exit));
@@ -478,6 +575,12 @@ void MainWindow::buildMenus()
     m_preparationToolbar->addAction(m_fitAction);
     m_preparationToolbar->addAction(m_actualSizeAction);
     m_preparationToolbar->addSeparator();
+    m_preparationToolbar->addAction(m_undoImagesAction);
+    m_preparationToolbar->addAction(m_redoImagesAction);
+    m_preparationToolbar->addSeparator();
+    m_preparationToolbar->addAction(m_removeImagesAction);
+    m_preparationToolbar->addAction(m_clearImagesAction);
+    m_preparationToolbar->addSeparator();
     auto *profileButton = new QToolButton(m_preparationToolbar);
     profileButton->setObjectName("profilesMenuButton");
     profileButton->setText("Profiles");
@@ -544,9 +647,14 @@ void MainWindow::updateWorkspace()
 
 void MainWindow::updateActions()
 {
-    if (!m_exportImageAction) return;
+    if (!m_exportImageAction || !m_imageUndoStack) return;
     const bool preparation = ui->workspaces->currentIndex() == 0;
     const bool hasImage = !m_currentOriginalImage.empty();
+    const bool hasSelection = !selectedImagePaths().isEmpty();
+    m_undoImagesAction->setEnabled(preparation && !m_busy && m_imageUndoStack->canUndo());
+    m_redoImagesAction->setEnabled(preparation && !m_busy && m_imageUndoStack->canRedo());
+    m_removeImagesAction->setEnabled(preparation && !m_busy && hasSelection);
+    m_clearImagesAction->setEnabled(preparation && !m_busy && !m_imagePaths.isEmpty());
     m_exportImageAction->setEnabled(preparation && !m_currentProcessedImage.empty());
     m_saveDocumentAction->setEnabled(preparation ? !m_currentProcessedImage.empty()
         : (ui->workspaces->currentIndex() == 1 ? m_review->hasSession() : m_profiles->hasProfile()) && !m_busy);
@@ -587,34 +695,47 @@ void MainWindow::updateActions()
 
 void MainWindow::setImageFiles(const QStringList &paths, const QString &folder)
 {
+    if (!m_applyingImageHistory) {
+        changeImageWorkspace("Open image set", [this, paths, folder] { setImageFiles(paths, folder); });
+        return;
+    }
     ++m_thumbnailGeneration;
-    m_imagePaths = paths;
+    m_imagePaths.clear();
+    QSet<QString> seen;
+    for (const auto &path : paths) {
+        const QString normalized = imagePath(path);
+        const QString key = imagePathKey(normalized);
+        if (!seen.contains(key)) { seen.insert(key); m_imagePaths.append(normalized); }
+    }
     m_currentFolder = folder;
     {
         const QSignalBlocker blocker(m_imageList), searchBlocker(m_imageSearch);
         m_imageList->clear();
         m_imageSearch->clear();
-        for (const QString &path : paths) {
+        for (const QString &path : m_imagePaths) {
             auto *item = new QListWidgetItem(style()->standardIcon(QStyle::SP_FileIcon), QFileInfo(path).fileName(), m_imageList);
             item->setToolTip(path);
             item->setSizeHint(QSize(180, 62));
         }
-        int row = paths.indexOf(m_currentPath);
-        if (row < 0 && !paths.isEmpty()) row = 0;
+        int row = m_imagePaths.indexOf(m_currentPath);
+        if (row < 0 && !m_imagePaths.isEmpty()) row = 0;
         m_imageList->setCurrentRow(row);
     }
-    m_folderLabel->setText(QString("%1 images%2").arg(paths.size())
+    m_folderLabel->setText(QString("%1 images%2").arg(m_imagePaths.size())
         .arg(folder.isEmpty() ? QString() : "\n" + QDir(folder).dirName()));
     m_folderLabel->setToolTip(folder);
-    if (!paths.contains(m_currentPath)) {
+    if (!m_imagePaths.contains(m_currentPath)) {
         m_currentPath.clear();
         m_currentOriginalImage.release(); m_currentProcessedImage.release(); m_currentMask.release();
         m_currentOverlayImage.release(); m_showMask->setChecked(false);
+        m_currentMaskPath.clear();
         m_documentLabel->setText("Image preparation");
+        m_documentLabel->setToolTip(QString());
         m_maskLabel->setText("No mask loaded");
+        m_maskLabel->setToolTip(QString());
         bool loaded = false;
-        for (int index = 0; index < paths.size(); ++index) {
-            if (loadImagePath(paths[index])) { loaded = true; break; }
+        for (int index = 0; index < m_imagePaths.size(); ++index) {
+            if (loadImagePath(m_imagePaths[index])) { loaded = true; break; }
             m_imageList->item(index)->setIcon(style()->standardIcon(QStyle::SP_MessageBoxWarning));
         }
         if (!loaded) {
@@ -641,6 +762,11 @@ void MainWindow::loadThumbnail(int index, int generation)
 
 bool MainWindow::loadImagePath(const QString &path)
 {
+    if (!m_applyingImageHistory && !m_imagePaths.contains(imagePath(path))) {
+        bool loaded = false;
+        changeImageWorkspace("Add image", [this, &path, &loaded] { loaded = loadImagePath(path); });
+        return loaded;
+    }
     cv::Mat loaded;
     try { loaded = ImageLoader().loadWithOpenCV(path); } catch (const cv::Exception &) { }
     if (loaded.empty() || ImageLoader().matToQImage(loaded).isNull()) {
@@ -648,8 +774,9 @@ bool MainWindow::loadImagePath(const QString &path)
         return false;
     }
     m_currentOriginalImage = loaded;
-    m_currentPath = QFileInfo(path).absoluteFilePath();
+    m_currentPath = imagePath(path);
     m_currentMask.release(); m_currentOverlayImage.release();
+    m_currentMaskPath.clear();
     m_maskLabel->setText("No mask loaded");
     m_showMask->setChecked(false);
     if (!m_imagePaths.contains(m_currentPath)) {
@@ -658,7 +785,8 @@ bool MainWindow::loadImagePath(const QString &path)
     }
     {
         const QSignalBlocker blocker(m_imageList);
-        m_imageList->setCurrentRow(m_imagePaths.indexOf(m_currentPath));
+        const int row = m_imagePaths.indexOf(m_currentPath);
+        if (m_imageList->currentRow() != row) m_imageList->setCurrentRow(row);
     }
     m_documentLabel->setText(QFileInfo(path).fileName());
     m_documentLabel->setToolTip(path);
@@ -686,6 +814,215 @@ void MainWindow::openFolder()
     if (files.isEmpty()) { QMessageBox::information(this, "No Images", "No supported images were found in this folder."); return; }
     setImageFiles(files, folder);
     ui->workspaces->setCurrentIndex(0);
+}
+
+bool MainWindow::acceptsImageDrop(const QMimeData *mime) const
+{
+    if (m_busy || ui->workspaces->currentIndex() != 0 || !mime || !mime->hasUrls()) return false;
+    for (const auto &url : mime->urls()) {
+        if (!url.isLocalFile()) continue;
+        const QFileInfo info(url.toLocalFile());
+        if (info.isDir() || supportedImage(info)) return true;
+    }
+    return false;
+}
+
+void MainWindow::dragEnterEvent(QDragEnterEvent *event)
+{
+    if (acceptsImageDrop(event->mimeData()) && (event->possibleActions() & Qt::CopyAction)) {
+        event->setDropAction(Qt::CopyAction);
+        event->accept();
+    } else event->ignore();
+}
+
+void MainWindow::dragMoveEvent(QDragMoveEvent *event)
+{
+    if (acceptsImageDrop(event->mimeData()) && (event->possibleActions() & Qt::CopyAction)) {
+        event->setDropAction(Qt::CopyAction);
+        event->accept();
+    } else event->ignore();
+}
+
+void MainWindow::dropEvent(QDropEvent *event)
+{
+    if (!acceptsImageDrop(event->mimeData()) || !(event->possibleActions() & Qt::CopyAction)) {
+        event->ignore();
+        return;
+    }
+    QStringList added;
+    QSet<QString> known;
+    for (const auto &path : m_imagePaths) known.insert(imagePathKey(path));
+    int skipped = 0;
+    for (const auto &url : event->mimeData()->urls()) {
+        if (!url.isLocalFile()) { ++skipped; continue; }
+        const QFileInfo info(url.toLocalFile());
+        const QStringList candidates = info.isDir() ? ProcessingJobs::imageFiles(info.absoluteFilePath())
+            : supportedImage(info) ? QStringList{info.absoluteFilePath()} : QStringList{};
+        if (candidates.isEmpty()) { ++skipped; continue; }
+        for (const auto &candidate : candidates) {
+            const QString normalized = imagePath(candidate);
+            const QString key = imagePathKey(normalized);
+            if (known.contains(key)) { ++skipped; continue; }
+            known.insert(key);
+            added.append(normalized);
+        }
+    }
+    if (!added.isEmpty()) {
+        changeImageWorkspace(QString("Add %1 image(s)").arg(added.size()), [this, &added, skipped] {
+            auto paths = m_imagePaths;
+            paths.append(added);
+            QString folder = QFileInfo(paths.first()).absolutePath();
+            for (const auto &path : paths) {
+                if (QFileInfo(path).absolutePath() != folder) { folder.clear(); break; }
+            }
+            setImageFiles(paths, folder);
+            bool loaded = false;
+            for (const auto &path : added) {
+                if (loadImagePath(path)) { loaded = true; break; }
+                m_imageList->item(m_imagePaths.indexOf(path))->setIcon(style()->standardIcon(QStyle::SP_MessageBoxWarning));
+            }
+            m_statusLabel->setText(QString("Added %1 image(s)%2%3").arg(added.size())
+                .arg(skipped ? QString("; skipped %1 duplicate or unsupported item(s)").arg(skipped) : QString())
+                .arg(loaded ? QString() : "; added files could not be opened"));
+        });
+    } else {
+        m_statusLabel->setText("No new supported images to add. Existing images were kept.");
+    }
+    event->setDropAction(Qt::CopyAction);
+    event->accept();
+}
+
+QStringList MainWindow::selectedImagePaths() const
+{
+    QStringList paths;
+    if (!m_imageList) return paths;
+    for (int row = 0; row < m_imageList->count(); ++row) {
+        const auto *item = m_imageList->item(row);
+        if (item->isSelected() && !item->isHidden()) paths.append(m_imagePaths[row]);
+    }
+    return paths;
+}
+
+MainWindow::ImageWorkspaceState MainWindow::imageWorkspaceState() const
+{
+    ImageWorkspaceState state;
+    state.paths = m_imagePaths;
+    state.folder = m_currentFolder;
+    state.currentPath = m_currentPath;
+    state.selectedPaths = selectedImagePaths();
+    state.filter = m_imageSearch->text();
+    state.maskPath = m_currentMaskPath;
+    state.showMask = m_showMask->isChecked();
+    state.maskOpacity = m_maskOpacity->value();
+    state.originalView = m_originalView->viewState();
+    state.processedView = m_processedView->viewState();
+    return state;
+}
+
+void MainWindow::changeImageWorkspace(const QString &description, const std::function<void()> &change)
+{
+    auto before = imageWorkspaceState();
+    ImageWorkspaceState after;
+    {
+        const QScopedValueRollback<bool> applying(m_applyingImageHistory, true);
+        change();
+        after = imageWorkspaceState();
+    }
+    if (before.paths != after.paths) {
+        m_imageUndoStack->push(new ImageWorkspaceCommand(this, description, std::move(before), std::move(after)));
+    }
+}
+
+void MainWindow::restoreImageWorkspace(const ImageWorkspaceState &state)
+{
+    const QScopedValueRollback<bool> applying(m_applyingImageHistory, true);
+    setImageFiles(state.paths, state.folder);
+    bool missingCurrent = false;
+    if (!state.currentPath.isEmpty() && m_currentPath != state.currentPath) {
+        missingCurrent = !loadImagePath(state.currentPath);
+    }
+    if (missingCurrent && m_imagePaths.contains(state.currentPath)) {
+        m_imageList->item(m_imagePaths.indexOf(state.currentPath))->setIcon(style()->standardIcon(QStyle::SP_MessageBoxWarning));
+    }
+    m_imageSearch->setText(state.filter);
+    {
+        const QSignalBlocker blocker(m_imageList);
+        m_imageList->setCurrentRow(m_imagePaths.indexOf(m_currentPath), QItemSelectionModel::NoUpdate);
+        m_imageList->clearSelection();
+        const QSet<QString> selected(state.selectedPaths.begin(), state.selectedPaths.end());
+        for (int row = 0; row < m_imagePaths.size(); ++row) {
+            auto *item = m_imageList->item(row);
+            item->setSelected(!item->isHidden() && selected.contains(m_imagePaths[row]));
+        }
+    }
+    m_currentMask.release();
+    m_currentOverlayImage.release();
+    m_currentMaskPath.clear();
+    m_maskLabel->setText("No mask loaded");
+    m_maskLabel->setToolTip(QString());
+    m_showMask->setChecked(false);
+    m_maskOpacity->setValue(state.maskOpacity);
+    const bool missingMask = !missingCurrent && !state.maskPath.isEmpty() && !loadMaskPath(state.maskPath);
+    m_showMask->setChecked(state.showMask && !m_currentMask.empty());
+    refreshImagePreviews();
+    m_originalView->restoreViewState(state.originalView);
+    m_processedView->restoreViewState(state.processedView);
+    m_statusLabel->setText(missingCurrent ? "Workspace restored, but the previous source image is unavailable."
+        : missingMask ? "Workspace restored, but the previous mask could not be loaded."
+        : QString("Restored %1 workspace image(s). Source files were not changed.").arg(m_imagePaths.size()));
+    updateActions();
+}
+
+void MainWindow::removeImagePaths(const QStringList &paths)
+{
+    if (paths.isEmpty()) return;
+    const QSet<QString> removed(paths.begin(), paths.end());
+    QStringList remaining;
+    QString filter = m_imageSearch->text();
+    for (const auto &path : m_imagePaths) {
+        if (!removed.contains(path)) remaining.append(path);
+    }
+    if (remaining.size() == m_imagePaths.size()) return;
+    bool visibleRemaining = false;
+    for (const auto &path : remaining) visibleRemaining |= QFileInfo(path).fileName().contains(filter, Qt::CaseInsensitive);
+    if (!visibleRemaining) filter.clear();
+    QString preferred = m_currentPath;
+    if (removed.contains(preferred)) {
+        preferred.clear();
+        const int current = m_imagePaths.indexOf(m_currentPath);
+        for (int row = current + 1; row < m_imagePaths.size(); ++row) {
+            const auto &candidate = m_imagePaths[row];
+            if (!removed.contains(candidate) && QFileInfo(candidate).fileName().contains(filter, Qt::CaseInsensitive)) {
+                preferred = candidate;
+                break;
+            }
+        }
+        for (int row = current - 1; preferred.isEmpty() && row >= 0; --row) {
+            const auto &candidate = m_imagePaths[row];
+            if (!removed.contains(candidate) && QFileInfo(candidate).fileName().contains(filter, Qt::CaseInsensitive)) preferred = candidate;
+        }
+    }
+    setImageFiles(remaining, m_currentFolder);
+    m_imageSearch->setText(filter);
+    if (!preferred.isEmpty() && preferred != m_currentPath) loadImagePath(preferred);
+    updateActions();
+}
+
+void MainWindow::removeSelectedImages()
+{
+    if (m_busy || ui->workspaces->currentIndex() != 0) return;
+    const auto paths = selectedImagePaths();
+    if (paths.isEmpty()) return;
+    changeImageWorkspace(QString("Remove %1 image(s)").arg(paths.size()), [this, &paths] { removeImagePaths(paths); });
+    m_statusLabel->setText(QString("Removed %1 image(s) from the workspace. Source files were kept.").arg(paths.size()));
+}
+
+void MainWindow::clearImages()
+{
+    if (m_busy || ui->workspaces->currentIndex() != 0) return;
+    if (m_imagePaths.isEmpty()) return;
+    changeImageWorkspace("Clear workspace", [this] { setImageFiles({}); });
+    m_statusLabel->setText("Image workspace cleared. Source files were kept.");
 }
 
 void MainWindow::navigateImage(int direction)
@@ -763,18 +1100,27 @@ void MainWindow::loadMask()
     const QString path = QFileDialog::getOpenFileName(this, "Load Mask", QFileInfo(m_currentPath).absolutePath(),
                                                      "Masks (*.png *.tif *.tiff)");
     if (path.isEmpty()) return;
+    if (!loadMaskPath(path)) {
+        QMessageBox::warning(this, "Mask Not Loaded", "The mask must be readable and match the original image dimensions.");
+    }
+}
+
+bool MainWindow::loadMaskPath(const QString &path)
+{
+    if (m_currentOriginalImage.empty()) return false;
     cv::Mat mask;
     try { mask = ImageLoader().loadWithOpenCV(path); } catch (const cv::Exception &) { }
     if (mask.empty() || mask.size() != m_currentOriginalImage.size()
         || (mask.channels() != 1 && mask.channels() != 3 && mask.channels() != 4)) {
-        QMessageBox::warning(this, "Mask Not Loaded", "The mask must be readable and match the original image dimensions.");
-        return;
+        return false;
     }
     m_currentMask = mask;
+    m_currentMaskPath = imagePath(path);
     m_maskLabel->setText(QFileInfo(path).fileName());
     m_maskLabel->setToolTip(path);
     updateOverlay();
     m_showMask->setChecked(true);
+    return true;
 }
 
 void MainWindow::updateOverlay()

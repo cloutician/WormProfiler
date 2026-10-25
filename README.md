@@ -1,5 +1,5 @@
 # WormProfiler (Whole section pending overhaul)
-
+'splash screen, morphometrics and wormprofiles'
 WormProfiler is a desktop image-preparation, crop-review, and tissue-measurement tool for worm microscopy, built with Qt 6 and OpenCV. Prepare image sets for ilastik, then organise its segmentation TIFFs into dated worm profiles and export tissue areas for time-series analysis.
 
 <p align="center">

@@ -1,5 +1,5 @@
 # WormProfiler (Whole section pending overhaul)
-'splash screen, morphometrics and wormprofiles'
+
 WormProfiler is a desktop image-preparation, crop-review, and tissue-measurement tool for worm microscopy, built with Qt 6 and OpenCV. Prepare image sets for ilastik, then organise its segmentation TIFFs into dated worm profiles and export tissue areas for time-series analysis.
 
 <p align="center">
@@ -91,6 +91,7 @@ The **Worm profiles** workspace groups multiple ilastik segmentation TIFFs under
 Measurements count original label pixels without preprocessing or resizing. Export a chronological CSV with one row per image, observation dates, elapsed days, four region areas, optional calibrated areas in square micrometres, source hashes, notes, and the label mapping. Save and reopen `.wormprofile.json` files to continue a profile later.
 
 The initial morphometrics importer supports single-page, single-channel unsigned 8-bit and 16-bit **Simple Segmentation** TIFFs. Multi-page stacks, floating-point probabilities, and colour renderings are not treated as tissue labels. See the [worm profile guide](docs/worm-profiles.md) for the workflow, CSV fields, and calibration details.
+'splash screen, morphometrics and wormprofiles'
 
 ### Preprocessing profile export
 
